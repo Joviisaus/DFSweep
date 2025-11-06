@@ -1,9 +1,13 @@
 #include "DFContainer.h"
+#include "CTMesh.h"
 #include <Eigen/src/Core/Matrix.h>
 
-DistanceField::DistanceField() {};
+DistanceField::DistanceField() { this->primes.clear(); };
 
-DistanceField::DistanceField(MeshLib::CTMesh *mesh) { SetMesh(mesh); }
+DistanceField::DistanceField(MeshLib::CTMesh *mesh) {
+  this->primes.clear();
+  SetMesh(mesh);
+}
 
 void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
   this->mesh = mesh;
@@ -26,9 +30,6 @@ void DistanceField::GridScalar(int MinScatter) {
   float MaxZ = FLT_MIN;
   float MinZ = FLT_MAX;
 
-  // #ifdef ENABLE_OMP
-  // #pragma omp parallel
-  // #endif
   for (int i = 0; i < PointList.size(); i++) {
     if (MinX > PointList[i][0]) {
       MinX = PointList[i][0];
@@ -295,20 +296,107 @@ float DistanceField::DistanceToMesh(const Eigen::Vector3f &point) {
 
   if (candidateIndices.empty())
     return 0.0f;
-
-  // 计算到最近点的距离
+  std::vector<float> nearestPoint;
+  nearestPoint.resize(3);
   float minDistance = std::numeric_limits<float>::max();
   for (int idx : candidateIndices) {
     const auto &meshPoint = PointList[idx];
     Eigen::Vector3f p(meshPoint[0], meshPoint[1], meshPoint[2]);
     float dist = (point - p).norm();
     if (dist < minDistance) {
+      // nearestPoint[0] = p[0];
+      // nearestPoint[1] = p[1];
+      // nearestPoint[2] = p[2];
       minDistance = dist;
     }
   }
 
+  // if (!this->primes.empty()) {
+  //   for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
+  //     MeshLib::CToolVertex *v =
+  //         static_cast<MeshLib::CToolVertex *>(viter.value());
+  //     if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
+  //         abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
+  //         abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
+  //       minDistance = this->DisCompute(point, v->label());
+  //     }
+  //   }
+  // }
+
   return minDistance;
 }
+
+double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
+  auto &m_params = this->primes[label].params;
+
+  // 更安全的平面检测
+  bool isPlane = (m_params[4] == 0 && m_params[5] == 0 && m_params[6] == 0 &&
+                  m_params[7] == 0 && m_params[8] == 0 && m_params[9] == 0);
+
+  if (isPlane) {
+    double a = m_params[1], b = m_params[2], c = m_params[3], d = m_params[0];
+    double norm = sqrt(a * a + b * b + c * c);
+
+    // 检查法向量是否为零
+    if (norm < 1e-10) {
+      return std::numeric_limits<double>::infinity();
+    }
+
+    return std::abs(a * point[0] + b * point[1] + c * point[2] + d) / norm;
+  }
+
+  // 二次曲面情况
+  int max_iter = 20;
+  double lambda = 0.0;
+  Eigen::Vector3f q = point;
+
+  for (int i = 0; i < max_iter; ++i) {
+    double x = q(0), y = q(1), z = q(2);
+
+    // 计算函数值和梯度
+    double F = m_params[0] + m_params[1] * x + m_params[2] * y +
+               m_params[3] * z + m_params[4] * x * y + m_params[5] * x * z +
+               m_params[6] * y * z + m_params[7] * x * x + m_params[8] * y * y +
+               m_params[9] * z * z;
+
+    Eigen::Vector3f gradF;
+    gradF << m_params[1] + m_params[4] * y + m_params[5] * z +
+                 2 * m_params[7] * x,
+        m_params[2] + m_params[4] * x + m_params[6] * z + 2 * m_params[8] * y,
+        m_params[3] + m_params[5] * x + m_params[6] * y + 2 * m_params[9] * z;
+
+    // 构造残差
+    Eigen::Vector4f residual;
+    residual.head<3>() = q - point + lambda * gradF;
+    residual(3) = F;
+
+    // 构造雅可比矩阵
+    Eigen::Matrix4f J;
+    Eigen::Matrix3f hessian;
+    hessian << 2 * m_params[7], m_params[4], m_params[5], m_params[4],
+        2 * m_params[8], m_params[6], m_params[5], m_params[6], 2 * m_params[9];
+
+    J.block<3, 3>(0, 0) = Eigen::Matrix3f::Identity() + lambda * hessian;
+    J.block<3, 1>(0, 3) = gradF;
+    J.block<1, 3>(3, 0) = gradF.transpose();
+    J(3, 3) = 0.0;
+
+    Eigen::Vector4f delta = J.colPivHouseholderQr().solve(-residual);
+
+    if (!delta.allFinite()) {
+      break;
+    }
+
+    q += delta.head<3>();
+    lambda += delta(3);
+
+    if (delta.norm() < 1e-6 && std::abs(F) < 1e-6) {
+      break;
+    }
+  }
+
+  return (q - point).norm();
+};
 
 void DistanceField::ComputeDistanceField() {
   if (PointList.empty() || Field.empty() || Coord.empty()) {
@@ -341,9 +429,9 @@ void DistanceField::ComputeDistanceField() {
       GradianceCount[i][j].resize(zSize, 0);
     }
   }
-  // #ifdef ENABLE_OMP
-  // #pragma omp parallel for collapse(3)
-  // #endif // ENABLE_OMP
+#ifdef ENABLE_OMP
+#pragma omp parallel for collapse(3)
+#endif // ENABLE_OMP
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
@@ -404,4 +492,120 @@ void DistanceField::ComputeDistanceField() {
       }
     }
   }
+}
+
+void DistanceField::readPrime(string primefile) {
+  std::ifstream file(primefile);
+  if (!file.is_open()) {
+    std::cerr << "Error: Unable to open the file " << primefile << std::endl;
+    return;
+  }
+
+  std::string line;
+  PrimeData current_prime;
+
+  while (std::getline(file, line)) {
+    if (line.find("m_primes[") != std::string::npos &&
+        line.find("->GetParams():") != std::string::npos) {
+      int id;
+      if (std::sscanf(line.c_str(), "m_primes[%d]->GetParams():", &id) != 1) {
+        std::cerr << "Warn: id resolve failed,Content: " << line << std::endl;
+        continue;
+      }
+      current_prime.id = id;
+      current_prime.params.clear();
+
+      for (int i = 0; i < 10; ++i) {
+        if (!std::getline(file, line)) {
+          std::cerr << "Warn: param count not match 10，id=" << id << std::endl;
+          break;
+        }
+        double param;
+        if (std::sscanf(line.c_str(), "%lf", &param) != 1) {
+          std::cerr << "Warn: param resolve failed ,Content: " << line
+                    << std::endl;
+          param = 0.0;
+        }
+        current_prime.params.push_back(param);
+      }
+
+      while (current_prime.params.size() < 10) {
+        current_prime.params.push_back(0.0);
+      }
+
+    } else if (line.find("of Rank:") != std::string::npos &&
+               line.find("Residual:") != std::string::npos) {
+      int rank;
+      double residual;
+      if (std::sscanf(line.c_str(), "of Rank: %d,Residual: %lf", &rank,
+                      &residual) != 2) {
+        std::cerr << "Warn: rank/residual resolve failed, Content: " << line
+                  << std::endl;
+        rank = -1;
+        residual = 0.0;
+      }
+      current_prime.rank = rank;
+      current_prime.residual = residual;
+
+      primes.push_back(current_prime);
+    }
+  }
+
+  file.close();
+}
+void DistanceField::SaveFieldToBinary(const std::string &filename) {
+  std::ofstream file(filename, std::ios::binary);
+  if (!file.is_open()) {
+    std::cerr << "Error: Cannot open file " << filename << std::endl;
+    return;
+  }
+
+  int xSize = Field.size();
+  int ySize = (xSize > 0) ? Field[0].size() : 0;
+  int zSize = (ySize > 0) ? Field[0][0].size() : 0;
+
+  // 写入维度信息
+  file.write(reinterpret_cast<const char *>(&xSize), sizeof(int));
+  file.write(reinterpret_cast<const char *>(&ySize), sizeof(int));
+  file.write(reinterpret_cast<const char *>(&zSize), sizeof(int));
+
+  // 写入数据
+  for (int i = 0; i < xSize; ++i) {
+    for (int j = 0; j < ySize; ++j) {
+      file.write(reinterpret_cast<const char *>(Field[i][j].data()),
+                 zSize * sizeof(float));
+    }
+  }
+
+  file.close();
+  std::cout << "Field data saved to " << filename << std::endl;
+}
+void DistanceField::SaveGradianceToBinary(const std::string &filename) {
+
+  std::ofstream file(filename, std::ios::binary);
+  if (!file.is_open()) {
+    std::cerr << "Error: Cannot open file " << filename << std::endl;
+    return;
+  }
+
+  int xSize = Field.size();
+  int ySize = (xSize > 0) ? Field[0].size() : 0;
+  int zSize = (ySize > 0) ? Field[0][0].size() : 0;
+
+  // 写入维度信息
+  file.write(reinterpret_cast<const char *>(&xSize), sizeof(int));
+  file.write(reinterpret_cast<const char *>(&ySize), sizeof(int));
+  file.write(reinterpret_cast<const char *>(&zSize), sizeof(int));
+
+  // 写入数据
+  for (int i = 0; i < xSize; ++i) {
+    for (int j = 0; j < ySize; ++j) {
+      file.write(reinterpret_cast<const char *>(
+                     this->getGradianceCount()[i][j].data()),
+                 zSize * sizeof(float));
+    }
+  }
+
+  file.close();
+  std::cout << "Field data saved to " << filename << std::endl;
 }

@@ -2,11 +2,12 @@
 #define __DFCONTAINER_H__
 #include "CTMesh.h"
 #include "OctTree.h"
+#include "PrimeData.h"
 #include <Eigen/Eigen>
 #include <Eigen/src/Core/Matrix.h>
 #include <float.h>
 
-inline double epsilon = 5e-1f;
+inline double epsilon = 1e-1f;
 
 class DistanceField {
 public:
@@ -15,6 +16,7 @@ public:
   void SetMesh(MeshLib::CTMesh *mesh);
   void GridScalar(int MinScatter);
   void ComputeDistanceField();
+  void readPrime(string primefile);
   std::vector<std::vector<std::vector<float>>> getField() { return Field; };
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> getCoord() {
     return Coord;
@@ -22,6 +24,8 @@ public:
   std::vector<std::vector<std::vector<int>>> getGradianceCount() {
     return this->GradianceCount;
   };
+  void SaveFieldToBinary(const std::string &filename);
+  void SaveGradianceToBinary(const std::string &filename);
 
 protected:
   MeshLib::CTMesh *mesh;
@@ -30,6 +34,7 @@ protected:
   std::vector<std::vector<std::vector<float>>> Field;
   std::vector<std::vector<std::vector<int>>> GradianceCount;
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord;
+  std::vector<PrimeData> primes;
   int maxPointsPerNode = 32;
   int maxDepth = 8;
   void BuildOctree();
@@ -37,7 +42,6 @@ protected:
                             const std::vector<int> &pointIndices, int depth);
   void SubdivideNode(std::shared_ptr<OctreeNode> node);
 
-  // 距离计算相关方法
   float DistanceToMesh(const Eigen::Vector3f &point);
   void FindNearestPointsInOctree(const Eigen::Vector3f &point,
                                  std::shared_ptr<OctreeNode> node,
@@ -46,6 +50,7 @@ protected:
                                 const Eigen::Vector3f &v0,
                                 const Eigen::Vector3f &v1,
                                 const Eigen::Vector3f &v2);
+  double DisCompute(Eigen::Vector3f point, int label);
   Eigen::Vector3f ClosestPointOnTriangle(const Eigen::Vector3f &point,
                                          const Eigen::Vector3f &v0,
                                          const Eigen::Vector3f &v1,

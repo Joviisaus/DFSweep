@@ -44,6 +44,9 @@ int main(int argc, char **argv) {
 
   DistanceField DistanceField;
   DistanceField.SetMesh(&mesh);
+  if (prime_file.substr(prime_file.find_last_of(".") + 1) == "txt") {
+    DistanceField.readPrime(prime_file);
+  }
   DistanceField.GridScalar(100);
   DistanceField.ComputeDistanceField();
 

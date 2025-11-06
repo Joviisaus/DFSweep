@@ -53,11 +53,12 @@ void MeshViewer::setGrid(
   this->scalarVals = new float[totalSize];
   this->GradianceScalar = new int[totalSize];
   size_t index = 0;
-  for (size_t x = 0; x < this->dimX; ++x) {
+  for (size_t z = 0; z < this->dimZ; ++z) {
     for (size_t y = 0; y < this->dimY; ++y) {
-      for (size_t z = 0; z < this->dimZ; ++z) {
+      for (size_t x = 0; x < this->dimX; ++x) {
         this->scalarVals[index] = Field[x][y][z];
-        this->GradianceScalar[index++] = GradianceCount[x][y][z];
+        this->GradianceScalar[index] = GradianceCount[x][y][z];
+        index++;
       }
     }
   }

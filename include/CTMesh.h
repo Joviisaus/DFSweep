@@ -41,13 +41,11 @@ inline void CToolVertex::_from_string() {
   for (std::list<CToken *>::iterator iter = parser.tokens().begin();
        iter != parser.tokens().end(); ++iter) {
     CToken *token = *iter;
-    /*if (token->m_key == "uv")
-    {
-            double u, v;
-            sscanf(token->m_value.c_str(), "(%lf %lf)", &u, &v);
-            m_huv[0] = u;
-            m_huv[1] = v;
-    }*/
+    if (token->m_key == "Label") {
+      int l;
+      sscanf(token->m_value.c_str(), "(%d)", &l);
+      this->m_label = l;
+    }
   }
 }
 
