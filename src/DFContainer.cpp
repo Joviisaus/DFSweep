@@ -19,6 +19,21 @@ void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
     pointcoord.push_back(viter.value()->point()[1]);
     pointcoord.push_back(viter.value()->point()[2]);
     this->PointList.push_back(pointcoord);
+    Eigen::Vector3f normal = Eigen::Vector3f(0.0, 0.0, 0.0);
+    MeshLib::CTMesh::CVertex *v = *viter;
+    for (MeshLib::CTMesh::VertexFaceIterator vfiter(v); !vfiter.end();
+         vfiter++) {
+      MeshLib::CTMesh::CFace *f = *vfiter;
+      if (f->area() < 1e-10)
+        continue;
+      normal += Eigen::Vector3f(f->normal()[0] * f->area(),
+                                f->normal()[1] * f->area(),
+                                f->normal()[2] * f->area());
+    }
+    normal.normalize();
+    v->normal()[0] = normal[0];
+    v->normal()[1] = normal[1];
+    v->normal()[2] = normal[2];
   }
 }
 
@@ -314,16 +329,20 @@ float DistanceField::PointToTriangleDistance(const Eigen::Vector3f &point,
   return (point - closestPoint).norm();
 }
 
-float DistanceField::DistanceToMesh(const Eigen::Vector3f &point) {
-  if (!mesh || PointList.empty())
-    return 0.0f;
+Eigen::Vector4f DistanceField::DistanceToMesh(const Eigen::Vector3f &point) {
+  Eigen::Vector4f DistanceVector;
+  if (!mesh || PointList.empty()) {
+    DistanceVector.setZero();
+    return DistanceVector;
+  }
 
-  // 使用八叉树找到候选点
   std::vector<int> candidateIndices;
   FindNearestPointsInOctree(point, octreeRoot, candidateIndices);
 
-  if (candidateIndices.empty())
-    return 0.0f;
+  if (candidateIndices.empty()) {
+    DistanceVector.setZero();
+    return DistanceVector;
+  }
   std::vector<float> nearestPoint;
   nearestPoint.resize(3);
   float minDistance = std::numeric_limits<float>::max();
@@ -347,23 +366,33 @@ float DistanceField::DistanceToMesh(const Eigen::Vector3f &point) {
           abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
           abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
         minDistance = this->DisCompute(point, v->label());
+        Eigen::Vector3f VertexNormal =
+            Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
+        Eigen::Vector3f vertexPoint =
+            Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
+        if ((vertexPoint - point).dot(VertexNormal) < 0) {
+          DistanceVector[0] = -VertexNormal[0];
+          DistanceVector[1] = -VertexNormal[1];
+          DistanceVector[2] = -VertexNormal[2];
+          DistanceVector[3] = minDistance;
+        } else {
+          DistanceVector[0] = VertexNormal[0];
+          DistanceVector[1] = VertexNormal[1];
+          DistanceVector[2] = VertexNormal[2];
+          DistanceVector[3] = minDistance;
+        }
+
         break;
       }
     }
   }
 
-  return minDistance;
+  return DistanceVector;
 }
 
 double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
   auto &m_params = this->primes[label].params;
 
-  // std::cout << "Params: " << m_params[0] << " " << m_params[1] << " "
-  //           << m_params[2] << " " << m_params[3] << " " << m_params[4] << " "
-  //           << m_params[5] << " " << m_params[6] << " " << m_params[7] << " "
-  //           << m_params[8] << " " << m_params[9] << std::endl;
-
-  // 更安全的平面检测
   bool isPlane = (m_params[4] == 0 && m_params[5] == 0 && m_params[6] == 0 &&
                   m_params[7] == 0 && m_params[8] == 0 && m_params[9] == 0);
 
@@ -371,7 +400,6 @@ double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
     double a = m_params[1], b = m_params[2], c = m_params[3], d = m_params[0];
     double norm = sqrt(a * a + b * b + c * c);
 
-    // 检查法向量是否为零
     if (norm < 1e-10) {
       return std::numeric_limits<double>::infinity();
     }
@@ -379,7 +407,6 @@ double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
     return std::abs(a * point[0] + b * point[1] + c * point[2] + d) / norm;
   }
 
-  // 二次曲面情况
   int max_iter = 20;
   double lambda = 0.0;
   Eigen::Vector3f q = point;
@@ -387,7 +414,6 @@ double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
   for (int i = 0; i < max_iter; ++i) {
     double x = q(0), y = q(1), z = q(2);
 
-    // 计算函数值和梯度
     double F = m_params[0] + m_params[1] * x + m_params[2] * y +
                m_params[3] * z + m_params[4] * x * y + m_params[5] * x * z +
                m_params[6] * y * z + m_params[7] * x * x + m_params[8] * y * y +
@@ -399,12 +425,10 @@ double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
         m_params[2] + m_params[4] * x + m_params[6] * z + 2 * m_params[8] * y,
         m_params[3] + m_params[5] * x + m_params[6] * y + 2 * m_params[9] * z;
 
-    // 构造残差
     Eigen::Vector4f residual;
     residual.head<3>() = q - point + lambda * gradF;
     residual(3) = F;
 
-    // 构造雅可比矩阵
     Eigen::Matrix4f J;
     Eigen::Matrix3f hessian;
     hessian << 2 * m_params[7], m_params[4], m_params[5], m_params[4],
@@ -442,6 +466,16 @@ void DistanceField::ComputeDistanceField() {
   int xSize = Field.size();
   int ySize = Field[0].size();
   int zSize = Field[0][0].size();
+  GradianceCount.resize(xSize);
+  GradianceField.resize(xSize);
+  for (int i = 0; i < xSize; ++i) {
+    GradianceCount[i].resize(ySize);
+    GradianceField[i].resize(ySize);
+    for (int j = 0; j < ySize; ++j) {
+      GradianceCount[i][j].resize(zSize, 0);
+      GradianceField[i][j].resize(zSize);
+    }
+  }
 
 #ifdef ENABLE_OMP
 #pragma omp parallel for collapse(3)
@@ -450,17 +484,21 @@ void DistanceField::ComputeDistanceField() {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
         const Eigen::Vector3f &samplePoint = Coord[i][j][k];
-        float distance = DistanceToMesh(samplePoint);
-        Field[i][j][k] = distance;
+        Eigen::Vector4f distance = DistanceToMesh(samplePoint);
+        GradianceField[i][j][k] = distance.head(3);
+        Field[i][j][k] = distance[3];
       }
     }
   }
 
   GradianceCount.resize(xSize);
+  GradianceField.resize(xSize);
   for (int i = 0; i < xSize; ++i) {
     GradianceCount[i].resize(ySize);
+    GradianceField[i].resize(ySize);
     for (int j = 0; j < ySize; ++j) {
       GradianceCount[i][j].resize(zSize, 0);
+      GradianceField[i][j].resize(zSize);
     }
   }
 #ifdef ENABLE_OMP
@@ -509,22 +547,35 @@ void DistanceField::ComputeDistanceField() {
         }
 
         Eigen::Vector3f eigenvalues = eigensolver.eigenvalues();
+        Eigen::Matrix3f eigenvectors = eigensolver.eigenvectors();
 
         eigenvalues.normalize();
-
         int nonZeroCount = 0;
+        Eigen::Vector3f CrossField;
+        float MaxEigenValue = 0;
+
         for (int idx = 0; idx < 3; ++idx) {
           if (std::abs(eigenvalues[idx]) > epsilon) {
             nonZeroCount++;
           }
+          eigenvectors.col(idx).normalize();
+          if (eigenvalues[idx] >= MaxEigenValue) {
+            MaxEigenValue = eigenvalues[idx];
+            CrossField.col(idx) = eigenvectors.col(idx);
+          }
         }
 
-        if (nonZeroCount == 0) nonZeroCount = 1;
+        if (nonZeroCount == 0) {
+          nonZeroCount = 1;
+        }
 
-          GradianceCount[i][j][k] = nonZeroCount;
+        GradianceCount[i][j][k] = nonZeroCount;
+        // GradianceField[i][j][k] = CrossField;
       }
     }
   }
+  std::cout << "CrossField Build" << std::endl;
+  this->SweepProjection_Regist();
 }
 
 void DistanceField::readPrime(string primefile) {
@@ -585,6 +636,28 @@ void DistanceField::readPrime(string primefile) {
   }
 
   file.close();
+
+  for (MeshLib::MeshVertexIterator mviter(mesh); !mviter.end(); ++mviter) {
+    MeshLib::CToolVertex *v =
+        static_cast<MeshLib::CToolVertex *>(mviter.value());
+    auto params = primes[v->label()].params;
+    auto vertPoint = v->point();
+
+    Eigen::Vector3f Percise_normal = Eigen::Vector3f(0, 0, 0);
+    Percise_normal[0] = params[1] + vertPoint[1] * params[4] +
+                        vertPoint[2] * params[5] + 2 * params[7] * vertPoint[0];
+    Percise_normal[1] = params[2] + vertPoint[0] * params[4] +
+                        vertPoint[2] * params[6] + 2 * params[8] * vertPoint[1];
+    Percise_normal[2] = params[3] + vertPoint[0] * params[5] +
+                        vertPoint[1] * params[6] + 2 * params[9] * vertPoint[2];
+    Eigen::Vector3f FormerNormal =
+        Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
+    if (FormerNormal.dot(Percise_normal) < 0)
+      Percise_normal = -Percise_normal;
+    v->normal()[0] = Percise_normal[0];
+    v->normal()[1] = Percise_normal[1];
+    v->normal()[2] = Percise_normal[2];
+  }
 
   for (int i = 0; i < this->primes.size(); i++) {
     auto &m_params = this->primes[i].params;
@@ -650,4 +723,43 @@ void DistanceField::SaveGradianceToBinary(const std::string &filename) {
 
   file.close();
   std::cout << "Field data saved to " << filename << std::endl;
+}
+
+void DistanceField::SweepProjection_Regist() {
+  this->ExtractSweepDir();
+
+  if (this->getGradianceCount().size() == 0) {
+    return;
+  }
+  if (this->GradianceField.size() == 0) {
+    return;
+  }
+
+  // ToDo;
+  int xSize = Field.size();
+  int ySize = (xSize > 0) ? Field[0].size() : 0;
+  int zSize = (ySize > 0) ? Field[0][0].size() : 0;
+
+  for (int DirCount = 0; DirCount < SweepDir.size(); DirCount++) {
+    std::vector<std::vector<std::vector<float>>> ProjScalar;
+    for (int i = 0; i < xSize; i++) {
+      std::vector<std::vector<float>> ProjScalarX;
+      for (int j = 0; j < ySize; j++) {
+        std::vector<float> ProjScalarXY;
+        for (int k = 0; k < zSize; k++) {
+          float ProjScalarXYZ;
+          float angle = std::acos(
+              abs(this->GradianceField[i][j][k].dot(SweepDir[DirCount]) /
+                  (this->GradianceField[i][j][k].norm() *
+                   SweepDir[DirCount].norm())));
+          ProjScalarXYZ = abs(angle) > abs(PI / 2 - angle) ? abs(PI / 2 - angle)
+                                                           : abs(angle);
+          ProjScalarXY.push_back(ProjScalarXYZ);
+        }
+        ProjScalarX.push_back(ProjScalarXY);
+      }
+      ProjScalar.push_back(ProjScalarX);
+    }
+    this->SweepProjScalar.push_back(ProjScalar);
+  }
 }

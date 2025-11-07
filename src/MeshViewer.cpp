@@ -37,6 +37,7 @@ int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
 void MeshViewer::setGrid(
     std::vector<std::vector<std::vector<float>>> Field,
     std::vector<std::vector<std::vector<int>>> GradianceCount,
+    std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar,
     std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord) {
   this->bound_low = {Coord.front().front().front()[0],
                      Coord.front().front().front()[1],
@@ -49,15 +50,22 @@ void MeshViewer::setGrid(
   this->dimX = Coord.size();
   this->dimY = Coord.front().size();
   this->dimZ = Coord.front().front().size();
+  SweepProjScalars.resize(SweepProjScalar.size());
   size_t totalSize = this->dimX * this->dimY * this->dimZ;
   this->scalarVals = new float[totalSize];
   this->GradianceScalar = new int[totalSize];
+  for (int i = 0; i < SweepProjScalars.size(); i++) {
+    SweepProjScalars[i] = new float[totalSize];
+  }
   size_t index = 0;
   for (size_t z = 0; z < this->dimZ; ++z) {
     for (size_t y = 0; y < this->dimY; ++y) {
       for (size_t x = 0; x < this->dimX; ++x) {
         this->scalarVals[index] = Field[x][y][z];
         this->GradianceScalar[index] = GradianceCount[x][y][z];
+        for (int i = 0; i < SweepProjScalars.size(); i++) {
+          SweepProjScalars[i][index] = SweepProjScalar[i][x][y][z];
+        }
         index++;
       }
     }
@@ -73,8 +81,13 @@ int MeshViewer::show() {
   polyscope::VolumeGridNodeScalarQuantity *scalarQ =
       psGrid->addNodeScalarQuantity("Distance Field",
                                     std::make_tuple(scalarVals, nData));
-  psGrid->addNodeScalarQuantity("GradianceCount",
+  psGrid->addNodeScalarQuantity("Gradiance Count",
                                 std::make_tuple(GradianceScalar, nData));
+  for (int i = 0; i < SweepProjScalars.size(); i++) {
+    std::string str = "Accept for Sweep Direction " + std::to_string(i);
+    psGrid->addNodeScalarQuantity(str,
+                                  std::make_tuple(SweepProjScalars[i], nData));
+  };
   scalarQ->setEnabled(true);
   polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
   polyscope::view::upDir = polyscope::UpDir::NegZUp;

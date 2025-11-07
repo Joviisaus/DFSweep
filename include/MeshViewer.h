@@ -12,9 +12,11 @@ class MeshViewer {
 public:
   int show();
   int setMesh(MeshLib::CTMesh *mesh);
-  void setGrid(std::vector<std::vector<std::vector<float>>> Field,
-               std::vector<std::vector<std::vector<int>>> GradianceCount,
-               std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord);
+  void setGrid(
+      std::vector<std::vector<std::vector<float>>> Field,
+      std::vector<std::vector<std::vector<int>>> GradianceCount,
+      std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar,
+      std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord);
 
 protected:
   MeshLib::CTMesh *mesh;
@@ -25,6 +27,7 @@ protected:
   uint32_t dimZ;
   float *scalarVals;
   int *GradianceScalar;
+  std::vector<float *> SweepProjScalars;
   std::vector<std::vector<float>> vertices;
   std::vector<std::vector<int>> faces;
 };

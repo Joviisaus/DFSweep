@@ -8,6 +8,7 @@
 #include <float.h>
 
 inline double epsilon = 1e-2f;
+inline double PI = 3.1415926;
 
 class DistanceField {
 public:
@@ -21,6 +22,10 @@ public:
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> getCoord() {
     return Coord;
   };
+  std::vector<std::vector<std::vector<std::vector<float>>>>
+  GetSweepProjScalar() {
+    return this->SweepProjScalar;
+  };
   std::vector<std::vector<std::vector<int>>> getGradianceCount() {
     return this->GradianceCount;
   };
@@ -33,17 +38,22 @@ protected:
   std::vector<std::vector<float>> PointList;
   std::vector<std::vector<std::vector<float>>> Field;
   std::vector<std::vector<std::vector<int>>> GradianceCount;
+
+  std::vector<std::vector<std::vector<Eigen::Vector3f>>> GradianceField;
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord;
   std::vector<Eigen::Vector3f> SweepDir;
   std::vector<PrimeData> primes;
+  std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar;
+
   int maxPointsPerNode = 32;
   int maxDepth = 8;
   void BuildOctree();
   void BuildOctreeRecursive(std::shared_ptr<OctreeNode> node,
                             const std::vector<int> &pointIndices, int depth);
+  void SweepProjection_Regist();
   void SubdivideNode(std::shared_ptr<OctreeNode> node);
 
-  float DistanceToMesh(const Eigen::Vector3f &point);
+  Eigen::Vector4f DistanceToMesh(const Eigen::Vector3f &point);
   void FindNearestPointsInOctree(const Eigen::Vector3f &point,
                                  std::shared_ptr<OctreeNode> node,
                                  std::vector<int> &candidateIndices);
