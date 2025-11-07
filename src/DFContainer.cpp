@@ -92,6 +92,34 @@ void DistanceField::GridScalar(int MinScatter) {
   }
 }
 
+void DistanceField::ExtractSweepDir() {
+  if (this->mesh == NULL)
+    return;
+  this->SweepDir.clear();
+
+  // Todo: Complete Sweep Dir Detection;
+  Eigen::Vector3f Dir1;
+  Dir1[0] = 1;
+  Dir1[1] = 0;
+  Dir1[2] = 0;
+
+  Eigen::Vector3f Dir2;
+  Dir2[0] = 0;
+  Dir2[1] = 1;
+  Dir2[2] = 0;
+
+  Eigen::Vector3f Dir3;
+  Dir3[0] = 0;
+  Dir3[1] = 0;
+  Dir3[2] = 1;
+
+  this->SweepDir.push_back(Dir1);
+  this->SweepDir.push_back(Dir2);
+  this->SweepDir.push_back(Dir3);
+
+  return;
+}
+
 void DistanceField::BuildOctree() {
   if (PointList.empty())
     return;
@@ -304,30 +332,36 @@ float DistanceField::DistanceToMesh(const Eigen::Vector3f &point) {
     Eigen::Vector3f p(meshPoint[0], meshPoint[1], meshPoint[2]);
     float dist = (point - p).norm();
     if (dist < minDistance) {
-      // nearestPoint[0] = p[0];
-      // nearestPoint[1] = p[1];
-      // nearestPoint[2] = p[2];
+      nearestPoint[0] = p[0];
+      nearestPoint[1] = p[1];
+      nearestPoint[2] = p[2];
       minDistance = dist;
     }
   }
 
-  // if (!this->primes.empty()) {
-  //   for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
-  //     MeshLib::CToolVertex *v =
-  //         static_cast<MeshLib::CToolVertex *>(viter.value());
-  //     if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
-  //         abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
-  //         abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
-  //       minDistance = this->DisCompute(point, v->label());
-  //     }
-  //   }
-  // }
+  if (!this->primes.empty()) {
+    for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
+      MeshLib::CToolVertex *v =
+          static_cast<MeshLib::CToolVertex *>(viter.value());
+      if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
+          abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
+          abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
+        minDistance = this->DisCompute(point, v->label());
+        break;
+      }
+    }
+  }
 
   return minDistance;
 }
 
 double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
   auto &m_params = this->primes[label].params;
+
+  // std::cout << "Params: " << m_params[0] << " " << m_params[1] << " "
+  //           << m_params[2] << " " << m_params[3] << " " << m_params[4] << " "
+  //           << m_params[5] << " " << m_params[6] << " " << m_params[7] << " "
+  //           << m_params[8] << " " << m_params[9] << std::endl;
 
   // 更安全的平面检测
   bool isPlane = (m_params[4] == 0 && m_params[5] == 0 && m_params[6] == 0 &&
@@ -476,19 +510,18 @@ void DistanceField::ComputeDistanceField() {
 
         Eigen::Vector3f eigenvalues = eigensolver.eigenvalues();
 
-        float MaxEigenValue = 0;
-        for (int idx = 0; idx < 3; ++idx) {
-          if (abs(eigenvalues[idx]) > MaxEigenValue)
-            MaxEigenValue = abs(eigenvalues[idx]);
-        }
+        eigenvalues.normalize();
+
         int nonZeroCount = 0;
         for (int idx = 0; idx < 3; ++idx) {
-          if (std::abs(eigenvalues[idx]) / MaxEigenValue > epsilon) {
+          if (std::abs(eigenvalues[idx]) > epsilon) {
             nonZeroCount++;
           }
         }
 
-        GradianceCount[i][j][k] = nonZeroCount;
+        if (nonZeroCount == 0) nonZeroCount = 1;
+
+          GradianceCount[i][j][k] = nonZeroCount;
       }
     }
   }
@@ -552,6 +585,15 @@ void DistanceField::readPrime(string primefile) {
   }
 
   file.close();
+
+  for (int i = 0; i < this->primes.size(); i++) {
+    auto &m_params = this->primes[i].params;
+
+    std::cout << "Params: " << m_params[0] << " " << m_params[1] << " "
+              << m_params[2] << " " << m_params[3] << " " << m_params[4] << " "
+              << m_params[5] << " " << m_params[6] << " " << m_params[7] << " "
+              << m_params[8] << " " << m_params[9] << std::endl;
+  }
 }
 void DistanceField::SaveFieldToBinary(const std::string &filename) {
   std::ofstream file(filename, std::ios::binary);

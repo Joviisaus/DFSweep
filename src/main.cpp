@@ -49,6 +49,7 @@ int main(int argc, char **argv) {
   }
   DistanceField.GridScalar(100);
   DistanceField.ComputeDistanceField();
+  DistanceField.SaveFieldToBinary("distance_field.bin");
 
   std::cout << "DistanceField Build" << std::endl;
 

@@ -7,7 +7,7 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <float.h>
 
-inline double epsilon = 1e-1f;
+inline double epsilon = 1e-2f;
 
 class DistanceField {
 public:
@@ -34,6 +34,7 @@ protected:
   std::vector<std::vector<std::vector<float>>> Field;
   std::vector<std::vector<std::vector<int>>> GradianceCount;
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord;
+  std::vector<Eigen::Vector3f> SweepDir;
   std::vector<PrimeData> primes;
   int maxPointsPerNode = 32;
   int maxDepth = 8;
@@ -46,6 +47,7 @@ protected:
   void FindNearestPointsInOctree(const Eigen::Vector3f &point,
                                  std::shared_ptr<OctreeNode> node,
                                  std::vector<int> &candidateIndices);
+  void ExtractSweepDir();
   float PointToTriangleDistance(const Eigen::Vector3f &point,
                                 const Eigen::Vector3f &v0,
                                 const Eigen::Vector3f &v1,
