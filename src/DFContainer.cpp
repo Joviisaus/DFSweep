@@ -139,7 +139,6 @@ void DistanceField::BuildOctree() {
   if (PointList.empty())
     return;
 
-  // 计算包围盒
   Eigen::Vector3f minPoint =
       Eigen::Vector3f::Constant(std::numeric_limits<float>::max());
   Eigen::Vector3f maxPoint =
@@ -151,13 +150,11 @@ void DistanceField::BuildOctree() {
     maxPoint = maxPoint.cwiseMax(p);
   }
 
-  // 扩展一点避免边界问题
   Eigen::Vector3f center = (minPoint + maxPoint) * 0.5f;
   float halfSize = (maxPoint - minPoint).norm() * 0.5f + 0.1f;
 
   octreeRoot = std::make_shared<OctreeNode>(center, halfSize);
 
-  // 收集所有点的索引
   std::vector<int> allIndices(PointList.size());
   for (int i = 0; i < PointList.size(); ++i) {
     allIndices[i] = i;
@@ -172,18 +169,15 @@ void DistanceField::BuildOctreeRecursive(std::shared_ptr<OctreeNode> node,
   if (pointIndices.empty())
     return;
 
-  // 如果点数少于阈值或达到最大深度，设为叶子节点
   if (pointIndices.size() <= maxPointsPerNode || depth >= maxDepth) {
     node->pointIndices = pointIndices;
     node->isLeaf = true;
     return;
   }
 
-  // 否则细分节点
   SubdivideNode(node);
   node->isLeaf = false;
 
-  // 将点分配到子节点中
   std::vector<std::vector<int>> childIndices(8);
   for (int idx : pointIndices) {
     const auto &point = PointList[idx];
@@ -200,7 +194,6 @@ void DistanceField::BuildOctreeRecursive(std::shared_ptr<OctreeNode> node,
     childIndices[childIndex].push_back(idx);
   }
 
-  // 递归构建子节点
   for (int i = 0; i < 8; ++i) {
     if (!childIndices[i].empty()) {
       BuildOctreeRecursive(node->children[i], childIndices[i], depth + 1);
@@ -228,19 +221,16 @@ void DistanceField::FindNearestPointsInOctree(
   if (!node)
     return;
 
-  // 计算点到节点包围盒的距离
   Eigen::Vector3f diff = (point - node->center).cwiseAbs();
   float distToNode =
       (diff - Eigen::Vector3f::Constant(node->halfSize)).cwiseMax(0.0f).norm();
 
-  // 如果是叶子节点，添加所有点
   if (node->isLeaf) {
     candidateIndices.insert(candidateIndices.end(), node->pointIndices.begin(),
                             node->pointIndices.end());
     return;
   }
 
-  // 递归搜索子节点
   for (const auto &child : node->children) {
     if (child) {
       FindNearestPointsInOctree(point, child, candidateIndices);
@@ -329,7 +319,8 @@ float DistanceField::PointToTriangleDistance(const Eigen::Vector3f &point,
   return (point - closestPoint).norm();
 }
 
-Eigen::Vector4f DistanceField::DistanceToMesh(const Eigen::Vector3f &point) {
+Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
+  Eigen::Vector3f point = this->Coord[x][y][z];
   Eigen::Vector4f DistanceVector;
   if (!mesh || PointList.empty()) {
     DistanceVector.setZero();
@@ -365,7 +356,26 @@ Eigen::Vector4f DistanceField::DistanceToMesh(const Eigen::Vector3f &point) {
       if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
           abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
           abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
+        bool FeaturePoint = false;
+        for (MeshLib::CTMesh::VertexVertexIterator vviter(v); !vviter.end();
+             ++vviter) {
+          if (static_cast<MeshLib::CToolVertex *>(vviter.value())->label() !=
+              v->label()) {
+            FeaturePoint = true;
+            break;
+          }
+        }
+        if (FeaturePoint) {
+
+          DistanceVector[0] = FLT_MAX;
+          DistanceVector[1] = FLT_MAX;
+          DistanceVector[2] = FLT_MAX;
+          DistanceVector[3] = minDistance;
+          this->FieldLabel[x][y][z] = -1;
+          break;
+        }
         minDistance = this->DisCompute(point, v->label());
+        this->FieldLabel[x][y][z] = v->label();
         Eigen::Vector3f VertexNormal =
             Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
         Eigen::Vector3f vertexPoint =
@@ -461,21 +471,24 @@ void DistanceField::ComputeDistanceField() {
     return;
   }
 
-  BuildOctree();
-
   int xSize = Field.size();
   int ySize = Field[0].size();
   int zSize = Field[0][0].size();
   GradianceCount.resize(xSize);
   GradianceField.resize(xSize);
+  FieldLabel.resize(xSize);
   for (int i = 0; i < xSize; ++i) {
     GradianceCount[i].resize(ySize);
     GradianceField[i].resize(ySize);
+    FieldLabel[i].resize(ySize);
     for (int j = 0; j < ySize; ++j) {
       GradianceCount[i][j].resize(zSize, 0);
       GradianceField[i][j].resize(zSize);
+      FieldLabel[i][j].resize(zSize);
     }
   }
+
+  BuildOctree();
 
 #ifdef ENABLE_OMP
 #pragma omp parallel for collapse(3)
@@ -483,8 +496,7 @@ void DistanceField::ComputeDistanceField() {
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
-        const Eigen::Vector3f &samplePoint = Coord[i][j][k];
-        Eigen::Vector4f distance = DistanceToMesh(samplePoint);
+        Eigen::Vector4f distance = DistanceToMesh(i, j, k);
         GradianceField[i][j][k] = distance.head(3);
         Field[i][j][k] = distance[3];
       }
@@ -507,70 +519,43 @@ void DistanceField::ComputeDistanceField() {
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
-        if (i <= 0 || i >= xSize - 1 || j <= 0 || j >= ySize - 1 || k <= 0 ||
-            k >= zSize - 1) {
-          GradianceCount[i][j][k] = 1;
-          continue;
+        int currentLabel = this->FieldLabel[i][j][k];
+        if (currentLabel == -1) {
+          GradianceCount[i][j][k] = 0;
+        }
+        bool hasDifferent = false;
+
+        if (i > 0 && this->FieldLabel[i - 1][j][k] != currentLabel &&
+            this->FieldLabel[i - 1][j][k] != -1) {
+          hasDifferent = true;
+        } else if (i < xSize - 1 &&
+                   this->FieldLabel[i + 1][j][k] != currentLabel &&
+                   this->FieldLabel[i + 1][j][k] != -1) {
+          hasDifferent = true;
         }
 
-        float dx = 1.0f;
-        float dy = 1.0f;
-        float dz = 1.0f;
-
-        float dxx =
-            (Field[i + 1][j][k] - 2 * Field[i][j][k] + Field[i - 1][j][k]) /
-            (dx * dx);
-        float dyy =
-            (Field[i][j + 1][k] - 2 * Field[i][j][k] + Field[i][j - 1][k]) /
-            (dy * dy);
-        float dzz =
-            (Field[i][j][k + 1] - 2 * Field[i][j][k] + Field[i][j][k - 1]) /
-            (dz * dz);
-
-        float dxy = (Field[i + 1][j + 1][k] - Field[i + 1][j - 1][k] -
-                     Field[i - 1][j + 1][k] + Field[i - 1][j - 1][k]) /
-                    (4 * dx * dy);
-        float dxz = (Field[i + 1][j][k + 1] - Field[i + 1][j][k - 1] -
-                     Field[i - 1][j][k + 1] + Field[i - 1][j][k - 1]) /
-                    (4 * dx * dz);
-        float dyz = (Field[i][j + 1][k + 1] - Field[i][j + 1][k - 1] -
-                     Field[i][j - 1][k + 1] + Field[i][j - 1][k - 1]) /
-                    (4 * dy * dz);
-
-        Eigen::Matrix3f hessian;
-        hessian << dxx, dxy, dxz, dxy, dyy, dyz, dxz, dyz, dzz;
-
-        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> eigensolver(hessian);
-        if (eigensolver.info() != Eigen::Success) {
-          GradianceCount[i][j][k] = 1;
-          continue;
-        }
-
-        Eigen::Vector3f eigenvalues = eigensolver.eigenvalues();
-        Eigen::Matrix3f eigenvectors = eigensolver.eigenvectors();
-
-        eigenvalues.normalize();
-        int nonZeroCount = 0;
-        Eigen::Vector3f CrossField;
-        float MaxEigenValue = 0;
-
-        for (int idx = 0; idx < 3; ++idx) {
-          if (std::abs(eigenvalues[idx]) > epsilon) {
-            nonZeroCount++;
-          }
-          eigenvectors.col(idx).normalize();
-          if (eigenvalues[idx] >= MaxEigenValue) {
-            MaxEigenValue = eigenvalues[idx];
-            CrossField.col(idx) = eigenvectors.col(idx);
+        if (!hasDifferent) {
+          if (j > 0 && this->FieldLabel[i][j - 1][k] != currentLabel &&
+              this->FieldLabel[i][j - 1][k] != -1) {
+            hasDifferent = true;
+          } else if (j < ySize - 1 &&
+                     this->FieldLabel[i][j + 1][k] != currentLabel &&
+                     this->FieldLabel[i][j + 1][k] != -1) {
+            hasDifferent = true;
           }
         }
 
-        if (nonZeroCount == 0) {
-          nonZeroCount = 1;
+        if (!hasDifferent) {
+          if (k > 0 && this->FieldLabel[i][j][k - 1] != -1 &&
+              this->FieldLabel[i][j][k - 1] != currentLabel) {
+            hasDifferent = true;
+          } else if (k < zSize - 1 && this->FieldLabel[i][j][k + 1] != -1 &&
+                     this->FieldLabel[i][j][k + 1] != currentLabel) {
+            hasDifferent = true;
+          }
         }
 
-        GradianceCount[i][j][k] = nonZeroCount;
-        // GradianceField[i][j][k] = CrossField;
+        GradianceCount[i][j][k] = hasDifferent ? 1 : 0;
       }
     }
   }
@@ -679,12 +664,10 @@ void DistanceField::SaveFieldToBinary(const std::string &filename) {
   int ySize = (xSize > 0) ? Field[0].size() : 0;
   int zSize = (ySize > 0) ? Field[0][0].size() : 0;
 
-  // 写入维度信息
   file.write(reinterpret_cast<const char *>(&xSize), sizeof(int));
   file.write(reinterpret_cast<const char *>(&ySize), sizeof(int));
   file.write(reinterpret_cast<const char *>(&zSize), sizeof(int));
 
-  // 写入数据
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       file.write(reinterpret_cast<const char *>(Field[i][j].data()),
@@ -707,12 +690,10 @@ void DistanceField::SaveGradianceToBinary(const std::string &filename) {
   int ySize = (xSize > 0) ? Field[0].size() : 0;
   int zSize = (ySize > 0) ? Field[0][0].size() : 0;
 
-  // 写入维度信息
   file.write(reinterpret_cast<const char *>(&xSize), sizeof(int));
   file.write(reinterpret_cast<const char *>(&ySize), sizeof(int));
   file.write(reinterpret_cast<const char *>(&zSize), sizeof(int));
 
-  // 写入数据
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       file.write(reinterpret_cast<const char *>(

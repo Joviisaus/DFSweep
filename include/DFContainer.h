@@ -37,6 +37,8 @@ protected:
   float PatchSize;
   std::vector<std::vector<float>> PointList;
   std::vector<std::vector<std::vector<float>>> Field;
+  std::vector<std::vector<std::vector<int>>> FieldLabel;
+  std::vector<std::vector<std::vector<int>>> FieldLabelDif;
   std::vector<std::vector<std::vector<int>>> GradianceCount;
 
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> GradianceField;
@@ -53,7 +55,7 @@ protected:
   void SweepProjection_Regist();
   void SubdivideNode(std::shared_ptr<OctreeNode> node);
 
-  Eigen::Vector4f DistanceToMesh(const Eigen::Vector3f &point);
+  Eigen::Vector4f DistanceToMesh(int x, int y, int z);
   void FindNearestPointsInOctree(const Eigen::Vector3f &point,
                                  std::shared_ptr<OctreeNode> node,
                                  std::vector<int> &candidateIndices);
