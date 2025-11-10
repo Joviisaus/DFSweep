@@ -16,6 +16,7 @@ public:
       std::vector<std::vector<std::vector<float>>> Field,
       std::vector<std::vector<std::vector<int>>> GradianceCount,
       std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar,
+      std::vector<std::vector<std::vector<float>>> GradianceDiff,
       std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord);
 
 protected:
@@ -26,6 +27,7 @@ protected:
   uint32_t dimY;
   uint32_t dimZ;
   float *scalarVals;
+  float *GradianceDiff;
   int *GradianceScalar;
   std::vector<float *> SweepProjScalars;
   std::vector<std::vector<float>> vertices;

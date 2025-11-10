@@ -1,8 +1,7 @@
 #ifndef __DFCONTAINER_H__
 #define __DFCONTAINER_H__
-#include "CTMesh.h"
 #include "OctTree.h"
-#include "PrimeData.h"
+#include "SweepDirDetector.h"
 #include <Eigen/Eigen>
 #include <Eigen/src/Core/Matrix.h>
 #include <float.h>
@@ -22,12 +21,16 @@ public:
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> getCoord() {
     return Coord;
   };
+
   std::vector<std::vector<std::vector<std::vector<float>>>>
   GetSweepProjScalar() {
     return this->SweepProjScalar;
   };
   std::vector<std::vector<std::vector<int>>> getGradianceCount() {
     return this->GradianceCount;
+  };
+  std::vector<std::vector<std::vector<float>>> getGradianceDiff() {
+    return this->GradianceDiff;
   };
   void SaveFieldToBinary(const std::string &filename);
   void SaveGradianceToBinary(const std::string &filename);
@@ -38,7 +41,7 @@ protected:
   std::vector<std::vector<float>> PointList;
   std::vector<std::vector<std::vector<float>>> Field;
   std::vector<std::vector<std::vector<int>>> FieldLabel;
-  std::vector<std::vector<std::vector<int>>> FieldLabelDif;
+  std::vector<std::vector<std::vector<float>>> GradianceDiff;
   std::vector<std::vector<std::vector<int>>> GradianceCount;
 
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> GradianceField;

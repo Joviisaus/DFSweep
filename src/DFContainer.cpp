@@ -12,6 +12,17 @@ DistanceField::DistanceField(MeshLib::CTMesh *mesh) {
 void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
   this->mesh = mesh;
   this->PointList.clear();
+  for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); mfiter++) {
+    MeshLib::CToolFace *face =
+        static_cast<MeshLib::CToolFace *>(mfiter.value());
+    auto normal = (face->halfedge()->target()->point() -
+                   face->halfedge()->source()->point()) ^
+                  (face->halfedge()->he_next()->target()->point() -
+                   face->halfedge()->he_next()->source()->point());
+    face->area() = abs(normal.norm());
+    normal /= normal.norm();
+    face->normal() = normal;
+  }
   for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
     std::vector<float> pointcoord;
     pointcoord.clear();
@@ -395,6 +406,20 @@ Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
         break;
       }
     }
+  } else {
+    for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
+      MeshLib::CToolVertex *v =
+          static_cast<MeshLib::CToolVertex *>(viter.value());
+      if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
+          abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
+          abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
+        DistanceVector[0] = v->normal()[0];
+        DistanceVector[1] = v->normal()[1];
+        DistanceVector[2] = v->normal()[2];
+        DistanceVector[3] = minDistance;
+        break;
+      }
+    }
   }
 
   return DistanceVector;
@@ -505,12 +530,15 @@ void DistanceField::ComputeDistanceField() {
 
   GradianceCount.resize(xSize);
   GradianceField.resize(xSize);
+  GradianceDiff.resize(xSize);
   for (int i = 0; i < xSize; ++i) {
     GradianceCount[i].resize(ySize);
     GradianceField[i].resize(ySize);
+    GradianceDiff[i].resize(ySize);
     for (int j = 0; j < ySize; ++j) {
-      GradianceCount[i][j].resize(zSize, 0);
+      GradianceCount[i][j].resize(zSize);
       GradianceField[i][j].resize(zSize);
+      GradianceDiff[i][j].resize(zSize);
     }
   }
 #ifdef ENABLE_OMP
@@ -519,6 +547,33 @@ void DistanceField::ComputeDistanceField() {
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
+        float MaxGradianceDiff = 1;
+
+        if (i > 0) {
+          MaxGradianceDiff =
+              MaxGradianceDiff < abs(this->GradianceField[i][j][k].dot(
+                                     this->GradianceField[i - 1][j][k]))
+                  ? MaxGradianceDiff
+                  : abs(this->GradianceField[i][j][k].dot(
+                        this->GradianceField[i - 1][j][k]));
+        }
+        if (j > 0) {
+          MaxGradianceDiff =
+              MaxGradianceDiff < abs(this->GradianceField[i][j][k].dot(
+                                     this->GradianceField[i][j - 1][k]))
+                  ? MaxGradianceDiff
+                  : abs(this->GradianceField[i][j][k].dot(
+                        this->GradianceField[i][j - 1][k]));
+        }
+        if (k > 0) {
+          MaxGradianceDiff =
+              MaxGradianceDiff < abs(this->GradianceField[i][j][k].dot(
+                                     this->GradianceField[i][j][k - 1]))
+                  ? MaxGradianceDiff
+                  : abs(this->GradianceField[i][j][k].dot(
+                        this->GradianceField[i][j][k - 1]));
+        }
+        this->GradianceDiff[i][j][k] = MaxGradianceDiff;
         int currentLabel = this->FieldLabel[i][j][k];
         if (currentLabel == -1) {
           GradianceCount[i][j][k] = 0;
@@ -560,7 +615,8 @@ void DistanceField::ComputeDistanceField() {
     }
   }
   std::cout << "CrossField Build" << std::endl;
-  this->SweepProjection_Regist();
+  if (this->primes.size() != 0)
+    this->SweepProjection_Regist();
 }
 
 void DistanceField::readPrime(string primefile) {
