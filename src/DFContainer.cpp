@@ -23,7 +23,7 @@ void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
                    face->halfedge()->he_next()->source()->point());
     face->area() = abs(normal.norm());
     normal /= normal.norm();
-    face->normal() = normal;
+    face->normal() = normal / face->area();
   }
   for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
     std::vector<float> pointcoord;
@@ -363,6 +363,18 @@ Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
         }
         if (FeaturePoint) {
 
+          Eigen::Vector3f pointOnMesh =
+              Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
+          Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
+          Eigen::Vector3f NormalOnMesh =
+              Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
+          NormalOnMesh.normalize();
+
+          if ((pointOnMesh - pointOnGrid).normalized().dot(NormalOnMesh) < 0)
+            minDistance = -abs(minDistance);
+          else
+            minDistance = abs(minDistance);
+
           DistanceVector[0] = FLT_MAX;
           DistanceVector[1] = FLT_MAX;
           DistanceVector[2] = FLT_MAX;
@@ -371,6 +383,7 @@ Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
           break;
         }
         minDistance = this->DisCompute(point, v->label());
+
         this->FieldLabel[x][y][z] = v->label();
         Eigen::Vector3f VertexNormal =
             Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
@@ -380,7 +393,7 @@ Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
           DistanceVector[0] = -VertexNormal[0];
           DistanceVector[1] = -VertexNormal[1];
           DistanceVector[2] = -VertexNormal[2];
-          DistanceVector[3] = minDistance;
+          DistanceVector[3] = -minDistance;
         } else {
           DistanceVector[0] = VertexNormal[0];
           DistanceVector[1] = VertexNormal[1];
@@ -398,6 +411,14 @@ Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
       if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
           abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
           abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
+        Eigen::Vector3f pointOnMesh =
+            Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
+        Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
+        Eigen::Vector3f NormalOnMesh =
+            Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
+
+        if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
+          minDistance = -minDistance;
         DistanceVector[0] = v->normal()[0];
         DistanceVector[1] = v->normal()[1];
         DistanceVector[2] = v->normal()[2];
@@ -529,6 +550,11 @@ void DistanceField::ComputeDistanceField() {
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
+        if (this->Field[i][j][k] < 0) {
+          GradianceCount[i][j][k] = 0;
+          GradianceDiff[i][j][k] = 0;
+          continue;
+        }
         float MaxGradianceDiff = 0;
 
         if (i > 0) {
