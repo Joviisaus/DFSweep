@@ -31,7 +31,7 @@ public:
   };
   std::vector<std::vector<std::vector<float>>> getGradianceDiff() {
     return this->GradianceDiff;
-  };
+  }
   void SaveFieldToBinary(const std::string &filename);
   void SaveGradianceToBinary(const std::string &filename);
 

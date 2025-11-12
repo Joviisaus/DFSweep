@@ -137,6 +137,7 @@ public:
   CToolFace() {};
   ~CToolFace() {};
   void _to_string();
+  void _from_string();
   bool &visited() { return m_visited; };
   CPoint &normal() { return m_normal; };
   CPoint &rgb() { return m_rgb; };
@@ -152,6 +153,20 @@ protected:
   int m_type;
   int m_label;
 };
+
+inline void CToolFace::_from_string() {
+  CParser parser(m_string);
+
+  for (std::list<CToken *>::iterator iter = parser.tokens().begin();
+       iter != parser.tokens().end(); ++iter) {
+    CToken *token = *iter;
+    if (token->m_key == "label") {
+      int l;
+      sscanf(token->m_value.c_str(), "(%d)", &l);
+      this->m_label = l;
+    }
+  }
+}
 
 inline void CToolFace::_to_string() {
   std::string a;

@@ -14,7 +14,11 @@ public:
 protected:
   MeshLib::CTMesh *mesh;
   std::vector<Eigen::Vector3f> SweepDir;
+  std::vector<Eigen::Vector3f> PlaneFeatureLine;
   std::vector<PrimeData> primes;
+
+  void PlaneFeatureLineClustering();
+  void SweepDirCleaning();
 };
 
 #endif

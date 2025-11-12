@@ -1,6 +1,8 @@
 #include "DFContainer.h"
 #include "CTMesh.h"
+#include "SweepDirDetector.h"
 #include <Eigen/src/Core/Matrix.h>
+#include <cmath>
 
 DistanceField::DistanceField() { this->primes.clear(); };
 
@@ -123,25 +125,8 @@ void DistanceField::ExtractSweepDir() {
     return;
   this->SweepDir.clear();
 
-  // Todo: Complete Sweep Dir Detection;
-  Eigen::Vector3f Dir1;
-  Dir1[0] = 1;
-  Dir1[1] = 0;
-  Dir1[2] = 0;
-
-  Eigen::Vector3f Dir2;
-  Dir2[0] = 0;
-  Dir2[1] = 1;
-  Dir2[2] = 0;
-
-  Eigen::Vector3f Dir3;
-  Dir3[0] = 0;
-  Dir3[1] = 0;
-  Dir3[2] = 1;
-
-  this->SweepDir.push_back(Dir1);
-  this->SweepDir.push_back(Dir2);
-  this->SweepDir.push_back(Dir3);
+  SweepDirDetector detector(this->mesh, this->primes);
+  this->SweepDir = detector.GetSweepDir();
 
   return;
 }
@@ -428,10 +413,7 @@ Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
 double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
   auto &m_params = this->primes[label].params;
 
-  bool isPlane = (m_params[4] == 0 && m_params[5] == 0 && m_params[6] == 0 &&
-                  m_params[7] == 0 && m_params[8] == 0 && m_params[9] == 0);
-
-  if (isPlane) {
+  if (this->primes[label].isPlane) {
     double a = m_params[1], b = m_params[2], c = m_params[3], d = m_params[0];
     double norm = sqrt(a * a + b * b + c * c);
 
@@ -547,31 +529,56 @@ void DistanceField::ComputeDistanceField() {
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
-        float MaxGradianceDiff = 1;
+        float MaxGradianceDiff = 0;
 
         if (i > 0) {
           MaxGradianceDiff =
-              MaxGradianceDiff < abs(this->GradianceField[i][j][k].dot(
+              MaxGradianceDiff > acos(this->GradianceField[i][j][k].dot(
                                      this->GradianceField[i - 1][j][k]))
                   ? MaxGradianceDiff
-                  : abs(this->GradianceField[i][j][k].dot(
+                  : acos(this->GradianceField[i][j][k].dot(
                         this->GradianceField[i - 1][j][k]));
+        }
+
+        if (i < xSize - 1) {
+          MaxGradianceDiff =
+              MaxGradianceDiff > acos(this->GradianceField[i][j][k].dot(
+                                     this->GradianceField[i + 1][j][k]))
+                  ? MaxGradianceDiff
+                  : acos(this->GradianceField[i][j][k].dot(
+                        this->GradianceField[i + 1][j][k]));
         }
         if (j > 0) {
           MaxGradianceDiff =
-              MaxGradianceDiff < abs(this->GradianceField[i][j][k].dot(
+              MaxGradianceDiff > acos(this->GradianceField[i][j][k].dot(
                                      this->GradianceField[i][j - 1][k]))
                   ? MaxGradianceDiff
-                  : abs(this->GradianceField[i][j][k].dot(
+                  : acos(this->GradianceField[i][j][k].dot(
                         this->GradianceField[i][j - 1][k]));
+        }
+        if (j < ySize - 1) {
+          MaxGradianceDiff =
+              MaxGradianceDiff > acos(this->GradianceField[i][j][k].dot(
+                                     this->GradianceField[i][j + 1][k]))
+                  ? MaxGradianceDiff
+                  : acos(this->GradianceField[i][j][k].dot(
+                        this->GradianceField[i][j + 1][k]));
         }
         if (k > 0) {
           MaxGradianceDiff =
-              MaxGradianceDiff < abs(this->GradianceField[i][j][k].dot(
+              MaxGradianceDiff > acos(this->GradianceField[i][j][k].dot(
                                      this->GradianceField[i][j][k - 1]))
                   ? MaxGradianceDiff
-                  : abs(this->GradianceField[i][j][k].dot(
+                  : acos(this->GradianceField[i][j][k].dot(
                         this->GradianceField[i][j][k - 1]));
+        }
+        if (k < zSize - 1) {
+          MaxGradianceDiff =
+              MaxGradianceDiff > acos(this->GradianceField[i][j][k].dot(
+                                     this->GradianceField[i][j][k + 1]))
+                  ? MaxGradianceDiff
+                  : acos(this->GradianceField[i][j][k].dot(
+                        this->GradianceField[i][j][k + 1]));
         }
         this->GradianceDiff[i][j][k] = MaxGradianceDiff;
         int currentLabel = this->FieldLabel[i][j][k];
@@ -671,6 +678,11 @@ void DistanceField::readPrime(string primefile) {
       }
       current_prime.rank = rank;
       current_prime.residual = residual;
+      bool isPlane =
+          (current_prime.params[4] == 0 && current_prime.params[5] == 0 &&
+           current_prime.params[6] == 0 && current_prime.params[7] == 0 &&
+           current_prime.params[8] == 0 && current_prime.params[9] == 0);
+      current_prime.isPlane = isPlane;
 
       primes.push_back(current_prime);
     }

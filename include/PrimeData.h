@@ -6,5 +6,6 @@ struct PrimeData {
   std::vector<double> params;
   int rank;
   double residual;
+  bool isPlane;
 };
 #endif // !__PRIMEDATA_H__
