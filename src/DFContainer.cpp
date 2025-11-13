@@ -21,7 +21,7 @@ void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
                    face->halfedge()->source()->point()) ^
                   (face->halfedge()->he_next()->target()->point() -
                    face->halfedge()->he_next()->source()->point());
-    face->area() = abs(normal.norm());
+    face->area() = 0.5 * abs(normal.norm());
     normal /= normal.norm();
     face->normal() = normal / face->area();
   }
@@ -362,7 +362,6 @@ Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
           }
         }
         if (FeaturePoint) {
-
           Eigen::Vector3f pointOnMesh =
               Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
           Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
@@ -370,16 +369,17 @@ Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
               Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
           NormalOnMesh.normalize();
 
-          if ((pointOnMesh - pointOnGrid).normalized().dot(NormalOnMesh) < 0)
+          if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
             minDistance = -abs(minDistance);
           else
             minDistance = abs(minDistance);
 
-          DistanceVector[0] = FLT_MAX;
-          DistanceVector[1] = FLT_MAX;
-          DistanceVector[2] = FLT_MAX;
+          DistanceVector[0] = 0;
+          DistanceVector[1] = 0;
+          DistanceVector[2] = 0;
           DistanceVector[3] = minDistance;
           this->FieldLabel[x][y][z] = -1;
+
           break;
         }
         minDistance = this->DisCompute(point, v->label());
@@ -390,17 +390,16 @@ Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
         Eigen::Vector3f vertexPoint =
             Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
         if ((vertexPoint - point).dot(VertexNormal) < 0) {
-          DistanceVector[0] = -VertexNormal[0];
-          DistanceVector[1] = -VertexNormal[1];
-          DistanceVector[2] = -VertexNormal[2];
+          DistanceVector[0] = -v->normal()[0];
+          DistanceVector[1] = -v->normal()[1];
+          DistanceVector[2] = -v->normal()[2];
           DistanceVector[3] = -minDistance;
         } else {
-          DistanceVector[0] = VertexNormal[0];
-          DistanceVector[1] = VertexNormal[1];
-          DistanceVector[2] = VertexNormal[2];
+          DistanceVector[0] = v->normal()[0];
+          DistanceVector[1] = v->normal()[1];
+          DistanceVector[2] = v->normal()[2];
           DistanceVector[3] = minDistance;
         }
-
         break;
       }
     }
@@ -606,6 +605,8 @@ void DistanceField::ComputeDistanceField() {
                   : acos(this->GradianceField[i][j][k].dot(
                         this->GradianceField[i][j][k + 1]));
         }
+        if (this->GradianceField[i][j][k].norm() < 1e-16)
+          MaxGradianceDiff = 0;
         this->GradianceDiff[i][j][k] = MaxGradianceDiff;
         int currentLabel = this->FieldLabel[i][j][k];
         if (currentLabel == -1) {
@@ -719,6 +720,18 @@ void DistanceField::readPrime(string primefile) {
   for (MeshLib::MeshVertexIterator mviter(mesh); !mviter.end(); ++mviter) {
     MeshLib::CToolVertex *v =
         static_cast<MeshLib::CToolVertex *>(mviter.value());
+
+    bool FeaturePoint = false;
+    for (MeshLib::CTMesh::VertexVertexIterator vviter(v); !vviter.end();
+         ++vviter) {
+      if (static_cast<MeshLib::CToolVertex *>(vviter.value())->label() !=
+          v->label()) {
+        FeaturePoint = true;
+        break;
+      }
+    }
+    if (FeaturePoint)
+      continue;
     auto params = primes[v->label()].params;
     auto vertPoint = v->point();
 
@@ -733,9 +746,9 @@ void DistanceField::readPrime(string primefile) {
         Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
     if (FormerNormal.dot(Percise_normal) < 0)
       Percise_normal = -Percise_normal;
-    v->normal()[0] = Percise_normal[0];
-    v->normal()[1] = Percise_normal[1];
-    v->normal()[2] = Percise_normal[2];
+    // v->normal()[0] = Percise_normal[0];
+    // v->normal()[1] = Percise_normal[1];
+    // v->normal()[2] = Percise_normal[2];
   }
 
   for (int i = 0; i < this->primes.size(); i++) {
@@ -829,6 +842,8 @@ void DistanceField::SweepProjection_Regist() {
                    SweepDir[DirCount].norm())));
           ProjScalarXYZ = abs(angle) > abs(PI / 2 - angle) ? abs(PI / 2 - angle)
                                                            : abs(angle);
+          if (this->Field[i][j][k] < 0)
+            ProjScalarXYZ = 0;
           ProjScalarXY.push_back(ProjScalarXYZ);
         }
         ProjScalarX.push_back(ProjScalarXY);

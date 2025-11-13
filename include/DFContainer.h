@@ -8,6 +8,7 @@
 
 inline double epsilon = 1e-2f;
 inline double PI = 3.1415926;
+inline int SampleSize = 100;
 
 class DistanceField {
 public:

@@ -14,6 +14,8 @@ int main(int argc, char **argv) {
       ->check(CLI::ExistingFile);
   app.add_option("-e,--epsilon", epsilon,
                  "Gradiance Zero Value,default as 5e-1f");
+  app.add_option("-s,--SampleSize", SampleSize,
+                 "Grid Sample Size,default is 100");
   app.add_option("-p,--primefile", prime_file,
                  "Prime File if a Smooth Field is Needed")
       ->check(CLI::ExistingFile);
@@ -47,7 +49,7 @@ int main(int argc, char **argv) {
   if (prime_file.substr(prime_file.find_last_of(".") + 1) == "txt") {
     DistanceField.readPrime(prime_file);
   }
-  DistanceField.GridScalar(100);
+  DistanceField.GridScalar(SampleSize);
   DistanceField.ComputeDistanceField();
   DistanceField.SaveFieldToBinary("distance_field.bin");
 
