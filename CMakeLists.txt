@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(DFSweep) 
+project(DFSweep)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -94,10 +94,65 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(CLI11)
 
+find_package(Doxygen QUIET)
+find_package(Graphviz QUIET)
+if(Doxygen_FOUND AND Graphviz_FOUND)
+    message(STATUS "Doxygen found: ${DOXYGEN_EXECUTABLE}")
+    message(STATUS "Graphviz found: ${Graphviz_DIR}")
+    message(STATUS "CMAKE_SOURCE_DIR: ${CMAKE_SOURCE_DIR}")
+    include(FetchContent)
+    FetchContent_Declare(
+    doxygen-awesome-css
+    URL https://github.com/jothepro/doxygen-awesome-css/archive/refs/heads/main.zip
+)
+    FetchContent_MakeAvailable(doxygen-awesome-css)
+
+    # Save the location the files were cloned into
+    # This allows us to get the path to doxygen-awesome.css
+    FetchContent_GetProperties(doxygen-awesome-css SOURCE_DIR AWESOME_CSS_DIR)
+
+    set(DOXYGEN_INPUT "${CMAKE_SOURCE_DIR}")
+    set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/docs")
+    set(DOXYGEN_EXTRACT_ALL YES)
+    set(DOXYGEN_GENERATE_HTML YES)
+    set(DOXYGEN_GENERATE_LATEX YES)
+    set(DOXYGEN_HAVE_DOT YES)
+    set(DOXYGEN_CALL_GRAPH YES)
+    set(DOXYGEN_REFERANCE_RELATION YES)
+    set(DOXYFILE_CONTENT "
+    PROJECT_NAME           = ${PROJECT_NAME}
+    INPUT                  = ${DOXYGEN_INPUT} \
+        ${CMAKE_SOURCE_DIR}/3rd/MeshLib \
+        ${CMAKE_SOURCE_DIR}/include \
+        ${CMAKE_SOURCE_DIR}/src
+    OUTPUT_DIRECTORY       = ${DOXYGEN_OUTPUT_DIRECTORY}
+    EXTRACT_ALL            = ${DOXYGEN_EXTRACT_ALL}
+    HAVE_DOT               = ${DOXYGEN_HAVE_DOT}
+    GENERATE_TREEVIEW      = YES
+    CALL_GRAPH             = ${DOXYGEN_CALL_GRAPH}
+    REFERANCE_RELATION     = ${DOXYGEN_REFERANCE_RELATION}
+    GENERATE_HTML          = ${DOXYGEN_GENERATE_HTML}
+    GENERATE_LATEX         = ${DOXYGEN_GENERATE_LATEX}
+    UML_LOOK               = ${Graphviz_FOUND}
+    HTML_EXTRA_STYLESHEET  = ${AWESOME_CSS_DIR}/doxygen-awesome.css
+    ")
+    file(WRITE ${CMAKE_BINARY_DIR}/Doxyfile "${DOXYFILE_CONTENT}")
+    add_custom_target(doc
+        COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_BINARY_DIR}/Doxyfile
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Generating documentation with Doxygen"
+    )
+    install(DIRECTORY ${CMAKE_BINARY_DIR}/docs/html
+            DESTINATION share/doc/${PROJECT_NAME}
+    )
+else()
+    message(STATUS "Doxygen not found. Skipping documentation generation.")
+endif()
+
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
-	Eigen3::Eigen
+ Eigen3::Eigen
     polyscope
     CLI11::CLI11)
 
@@ -109,4 +164,7 @@ endif()
 
 install(TARGETS ${PROJECT_NAME}
     DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/bin
+)
+install(DIRECTORY ${CMAKE_BINARY_DIR}/docs/html
+    DESTINATION share/doc/${PROJECT_NAME}
 )
