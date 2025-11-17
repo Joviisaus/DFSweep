@@ -26,10 +26,12 @@ void SweepDirDetector::PlaneFeatureLineClustering() {
       Eigen::Vector3f Normal1 =
           Eigen::Vector3f(primes[label1].params[1], primes[label1].params[2],
                           primes[label1].params[3]);
+      Normal1.normalize();
       Eigen::Vector3f Normal2 =
           Eigen::Vector3f(primes[label2].params[1], primes[label2].params[2],
                           primes[label2].params[3]);
-      this->PlaneFeatureLine.push_back(Normal1.cross(Normal2));
+      Normal2.normalize();
+      this->PlaneFeatureLine.push_back(Normal1.cross(Normal2).normalized());
     }
   }
 
@@ -38,8 +40,10 @@ void SweepDirDetector::PlaneFeatureLineClustering() {
       if (primes[i].isPlane && primes[j].isPlane) {
         Eigen::Vector3f Normal1 = Eigen::Vector3f(
             primes[i].params[1], primes[i].params[2], primes[i].params[3]);
+        Normal1.normalize();
         Eigen::Vector3f Normal2 = Eigen::Vector3f(
             primes[j].params[1], primes[j].params[2], primes[j].params[3]);
+        Normal2.normalize();
         if (acos(abs(Normal1.dot(Normal2))) < 1e-16) {
           this->PlaneFeatureLine.push_back(Normal1);
         }

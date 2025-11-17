@@ -2,6 +2,7 @@
 #define __DFCONTAINER_H__
 #include "OctTree.h"
 #include "SweepDirDetector.h"
+#include "SweepDirFilter.h"
 #include <Eigen/Eigen>
 #include <Eigen/src/Core/Matrix.h>
 #include <float.h>

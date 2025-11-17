@@ -1,6 +1,7 @@
 #include "DFContainer.h"
 #include "CTMesh.h"
 #include "SweepDirDetector.h"
+#include "SweepDirFilter.h"
 #include <Eigen/src/Core/Matrix.h>
 #include <cmath>
 
@@ -127,6 +128,12 @@ void DistanceField::ExtractSweepDir() {
 
   SweepDirDetector detector(this->mesh, this->primes);
   this->SweepDir = detector.GetSweepDir();
+
+  std::cout << "Logging Potential Sweep Direction..." << std::endl;
+
+  for (int i = 0; i < this->SweepDir.size(); i++) {
+    std::cout << "Potential SweepDir: " << this->SweepDir[i] << std::endl;
+  }
 
   return;
 }
@@ -823,7 +830,6 @@ void DistanceField::SweepProjection_Regist() {
     return;
   }
 
-  // ToDo;
   int xSize = Field.size();
   int ySize = (xSize > 0) ? Field[0].size() : 0;
   int zSize = (ySize > 0) ? Field[0][0].size() : 0;
@@ -852,4 +858,6 @@ void DistanceField::SweepProjection_Regist() {
     }
     this->SweepProjScalar.push_back(ProjScalar);
   }
+
+  SweepDirFilter sf(&this->SweepDir, &this->SweepProjScalar);
 }
