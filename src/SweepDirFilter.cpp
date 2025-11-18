@@ -96,7 +96,7 @@ void SweepDirFilter::SweepDirFilting() {
   std::cout << "Sweep Dir After Filting" << std::endl;
   for (int i = 0; i < this->MarkedSweep.size(); i++) {
     if (this->MarkedSweep[i] == 1)
-      std::cout << SweepDir[0][i] << std::endl;
+      std::cout << std::endl << SweepDir[0][i] << std::endl;
   }
 }
 

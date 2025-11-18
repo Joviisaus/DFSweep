@@ -16,6 +16,11 @@ int main(int argc, char **argv) {
                  "Gradiance Zero Value,default as 5e-1f");
   app.add_option("-s,--SampleSize", SampleSize,
                  "Grid Sample Size,default is 100");
+  app.add_option("-r,--RotateZero", RotateZero,
+                 "RotateZero is difining max rotation angel in each sweep "
+                 "direction,default is 0.1");
+  app.add_option("-a,--ParallelAngel", ParallelAngel,
+                 "Adjust if a pair of plane is parallel,default is 1e-2");
   app.add_option("-p,--primefile", prime_file,
                  "Prime File if a Smooth Field is Needed")
       ->check(CLI::ExistingFile);

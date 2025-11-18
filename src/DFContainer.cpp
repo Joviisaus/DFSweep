@@ -753,9 +753,9 @@ void DistanceField::readPrime(string primefile) {
         Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
     if (FormerNormal.dot(Percise_normal) < 0)
       Percise_normal = -Percise_normal;
-    // v->normal()[0] = Percise_normal[0];
-    // v->normal()[1] = Percise_normal[1];
-    // v->normal()[2] = Percise_normal[2];
+    v->normal()[0] = Percise_normal[0];
+    v->normal()[1] = Percise_normal[1];
+    v->normal()[2] = Percise_normal[2];
   }
 
   for (int i = 0; i < this->primes.size(); i++) {

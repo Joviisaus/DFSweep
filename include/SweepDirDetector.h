@@ -6,6 +6,8 @@
 #include <Eigen/Eigen>
 #include <Eigen/src/Core/Matrix.h>
 
+inline float ParallelAngel = 1e-2;
+
 class SweepDirDetector {
 public:
   std::vector<Eigen::Vector3f> GetSweepDir() { return this->SweepDir; };
