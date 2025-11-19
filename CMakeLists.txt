@@ -1,36 +1,88 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.20)
 
-project(DFSweep)
+project(DFSweep LANGUAGES CXX)
 
+# 基本设置
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# 设置默认构建类型
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")
 endif()
-
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
-find_package(OpenMP QUIET)
-if(OpenMP_CXX_FOUND)
-    add_definitions(-DENABLE_OMP)
-    message(STATUS "OpenMP found, enabling OpenMP acceleration")
-else()
-    message(STATUS "OpenMP not found")
+if(MSVC)
+    foreach(flag_var
+        CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
+        CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE)
+        string(REPLACE "/MT" "/MD" ${flag_var} "${${flag_var}}")
+    endforeach()
 endif()
 
+option(ENABLE_CUDA "Enable CUDA support" ON)
+set(USE_CUDA FALSE)
 
-# 设置包含目录
-file(GLOB INCLUDE_DIRS
+if(WIN32 AND MSVC AND ENABLE_CUDA)
+    enable_language(CUDA)
+    find_package(CUDAToolkit QUIET)
+
+    if(CUDAToolkit_FOUND)
+        message(STATUS "CUDA toolkit found: ${CUDAToolkit_ROOT}")
+
+        file(WRITE ${CMAKE_BINARY_DIR}/check_cuda_device.cu
+        "#include <cuda_runtime.h>
+        int main() {
+            int count = 0;
+            cudaError_t err = cudaGetDeviceCount(&count);
+            return (err != cudaSuccess || count == 0) ? 1 : 0;
+        }")
+
+        try_compile(HAS_CUDA_DEVICE
+            ${CMAKE_BINARY_DIR}
+            ${CMAKE_BINARY_DIR}/check_cuda_device.cu
+            CMAKE_FLAGS -DCMAKE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}
+            OUTPUT_VARIABLE CUDA_CHECK_OUTPUT
+        )
+
+        if(HAS_CUDA_DEVICE)
+            message(STATUS "CUDA device detected, enabling CUDA support")
+            add_definitions(-DENABLE_CUDA)
+            set(USE_CUDA TRUE)
+
+            project(DFSweep LANGUAGES CXX CUDA)
+        else()
+            message(WARNING "No CUDA device found. CUDA disabled.")
+        endif()
+    else()
+        message(WARNING "CUDA toolkit not found. CUDA disabled.")
+    endif()
+else()
+    message(STATUS "CUDA not checked (only active on Windows + MSVC).")
+endif()
+
+set(USE_OMP FALSE)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC|GNU|Clang")
+    find_package(OpenMP QUIET)
+    if(OpenMP_CXX_FOUND)
+        message(STATUS "OpenMP found")
+        add_definitions(-DENABLE_OMP)
+        set(USE_OMP TRUE)
+    else()
+        message(STATUS "OpenMP not found, continue without it")
+    endif()
+endif()
+
+include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/3rd/MeshLib
-    ${CMAKE_CURRENT_SOURCE_DIR}/cuh/
 )
 
-INCLUDE_DIRECTORIES(${INCLUDE_DIRS})
+if(USE_CUDA)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/cuh)
+endif()
 
 file(GLOB SOURCE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
@@ -38,52 +90,39 @@ file(GLOB SOURCE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/3rd/MeshLib/*.cpp
 )
 
-
-if(CUDA_AVAILABLE)
+if(USE_CUDA)
     file(GLOB CUDA_SOURCE_FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/cu/*.cu
     )
     if(CUDA_SOURCE_FILES)
         list(APPEND SOURCE_FILES ${CUDA_SOURCE_FILES})
         set_source_files_properties(${CUDA_SOURCE_FILES} PROPERTIES LANGUAGE CUDA)
-        message(STATUS "CUDA source files: ${CUDA_SOURCE_FILES}")
-    else()
-        message(STATUS "No CUDA source files found")
+        message(STATUS "CUDA sources added: ${CUDA_SOURCE_FILES}")
     endif()
 endif()
 
-
 find_package(Eigen3 QUIET)
 if(Eigen3_FOUND)
-    message("Eigen found")
-    INCLUDE_DIRECTORIES(${EIGEN3_INCLUDE_DIR})
+    include_directories(${EIGEN3_INCLUDE_DIR})
 else()
-    message(STATUS
-    "Eigen not found in system. Downloading Eigen using FetchContent...")
-    file(DOWNLOAD
-  https://github.com/cpm-cmake/CPM.cmake/releases/latest/download/CPM.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake
-)
-    include(${CMAKE_CURRENT_BINARY_DIR}/cmake/CPM.cmake)
+    message(STATUS "Eigen not found, using FetchContent")
+    include(FetchContent)
 
-    CPMAddPackage(
-  NAME          Eigen
-  GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
-  GIT_TAG       3.4.0
-)
-    INCLUDE_DIRECTORIES(${Eigen_SOURCE_DIR})
+    FetchContent_Declare(
+        Eigen
+        GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+        GIT_TAG 3.4.0
+    )
+    FetchContent_MakeAvailable(Eigen)
+    include_directories(${Eigen_SOURCE_DIR})
 endif()
-
-
-
-message(STATUS "Downloading and building dependencies...")
 
 include(FetchContent)
 
 FetchContent_Declare(
     polyscope
     GIT_REPOSITORY https://github.com/nmwsharp/polyscope.git
-    GIT_TAG        v2.3.0
+    GIT_TAG v2.3.0
 )
 FetchContent_MakeAvailable(polyscope)
 
@@ -124,7 +163,9 @@ if(Doxygen_FOUND AND Graphviz_FOUND)
     INPUT                  = ${DOXYGEN_INPUT} \
         ${CMAKE_SOURCE_DIR}/3rd/MeshLib \
         ${CMAKE_SOURCE_DIR}/include \
-        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src \
+        ${CMAKE_SOURCE_DIR}/cuh \
+        ${CMAKE_SOURCE_DIR}/cu
     OUTPUT_DIRECTORY       = ${DOXYGEN_OUTPUT_DIRECTORY}
     EXTRACT_ALL            = ${DOXYGEN_EXTRACT_ALL}
     HAVE_DOT               = ${DOXYGEN_HAVE_DOT}
@@ -152,19 +193,22 @@ endif()
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
- Eigen3::Eigen
+    Eigen3::Eigen
     polyscope
-    CLI11::CLI11)
+    CLI11::CLI11
+)
 
-
-if(OpenMP_CXX_FOUND)
+if(USE_OMP)
     target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
 endif()
-
 
 install(TARGETS ${PROJECT_NAME}
     DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/bin
 )
+
 install(DIRECTORY ${CMAKE_BINARY_DIR}/docs/html
     DESTINATION share/doc/${PROJECT_NAME}
 )
+
+
+message(STATUS "CMake configuration finished.")

@@ -1,124 +1,125 @@
-#include "DistanceFieldCUDA.cuh"
-#include <cmath>
+// DistanceFieldKernels.cu
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <iostream>
+#include <Eigen/Core>
+#include <vector>
+#include <cstdio>
+#include <cstdlib>
 
-
-// 基础内核：每个线程处理一个体素，对所有点进行搜索
-__global__ void ComputeDistanceFieldBruteForceKernel(const float *points,
-                                                     int num_points,
-                                                     const float *coords,
-                                                     int num_voxels,
-                                                     float *distances) {
-
-  int voxel_idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-  if (voxel_idx >= num_voxels)
-    return;
-
-  // 获取当前体素坐标
-  float voxel_x = coords[voxel_idx * 3];
-  float voxel_y = coords[voxel_idx * 3 + 1];
-  float voxel_z = coords[voxel_idx * 3 + 2];
-
-  float min_distance_sq = FLT_MAX;
-
-  // 遍历所有点，找到最小距离
-  for (int i = 0; i < num_points; ++i) {
-    float point_x = points[i * 3];
-    float point_y = points[i * 3 + 1];
-    float point_z = points[i * 3 + 2];
-
-    float dx = point_x - voxel_x;
-    float dy = point_y - voxel_y;
-    float dz = point_z - voxel_z;
-
-    float distance_sq = dx * dx + dy * dy + dz * dz;
-
-    if (distance_sq < min_distance_sq) {
-      min_distance_sq = distance_sq;
+// ============= CUDA 错误检查 =============
+inline void checkCuda(cudaError_t err, const char* msg) {
+    if (err != cudaSuccess) {
+        printf("CUDA Error [%s]: %s\n", msg, cudaGetErrorString(err));
+        std::exit(EXIT_FAILURE);
     }
-  }
-
-  distances[voxel_idx] = sqrtf(min_distance_sq);
 }
 
-// 优化的内核：使用共享内存缓存点数据
-__global__ void ComputeDistanceFieldSharedKernel(const float *points,
-                                                 int num_points,
-                                                 const float *coords,
-                                                 int num_voxels,
-                                                 float *distances) {
+// ============= Vec3 结构（三维向量）============
+struct Vec3 {
+    float x, y, z;
 
-  extern __shared__ float shared_points[];
+    __host__ __device__ Vec3() : x(0), y(0), z(0) {}
+    __host__ __device__ Vec3(float _x, float _y, float _z) : x(_x), y(_y), z(_z) {}
+    __host__ __device__ Vec3(const Eigen::Vector3f& e) : x(e.x()), y(e.y()), z(e.z()) {}
 
-  int voxel_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  int tid = threadIdx.x;
-
-  // 将点数据加载到共享内存（分批处理）
-  int points_per_block = blockDim.x;
-  int num_batches = (num_points + points_per_block - 1) / points_per_block;
-
-  float voxel_x = 0, voxel_y = 0, voxel_z = 0;
-
-  if (voxel_idx < num_voxels) {
-    voxel_x = coords[voxel_idx * 3];
-    voxel_y = coords[voxel_idx * 3 + 1];
-    voxel_z = coords[voxel_idx * 3 + 2];
-  }
-
-  float min_distance_sq = FLT_MAX;
-
-  // 分批处理点数据
-  for (int batch = 0; batch < num_batches; ++batch) {
-    int point_offset = batch * points_per_block;
-    int local_point_idx = point_offset + tid;
-
-    // 加载点到共享内存
-    if (local_point_idx < num_points) {
-      shared_points[tid * 3] = points[local_point_idx * 3];
-      shared_points[tid * 3 + 1] = points[local_point_idx * 3 + 1];
-      shared_points[tid * 3 + 2] = points[local_point_idx * 3 + 2];
+    __host__ __device__ Vec3 operator-(const Vec3& b) const {
+        return Vec3(x - b.x, y - b.y, z - b.z);
     }
-    __syncthreads();
-
-    // 处理当前批次中的点
-    int points_in_batch = min(points_per_block, num_points - point_offset);
-
-    for (int i = 0; i < points_in_batch; ++i) {
-      if (voxel_idx >= num_voxels)
-        continue;
-
-      float point_x = shared_points[i * 3];
-      float point_y = shared_points[i * 3 + 1];
-      float point_z = shared_points[i * 3 + 2];
-
-      float dx = point_x - voxel_x;
-      float dy = point_y - voxel_y;
-      float dz = point_z - voxel_z;
-
-      float distance_sq = dx * dx + dy * dy + dz * dz;
-
-      if (distance_sq < min_distance_sq) {
-        min_distance_sq = distance_sq;
-      }
+    __host__ __device__ float squaredNorm() const {
+        return x * x + y * y + z * z;
     }
-    __syncthreads();
-  }
+};
 
-  if (voxel_idx < num_voxels) {
-    distances[voxel_idx] = sqrtf(min_distance_sq);
-  }
+// ============= CUDA Kernel =============
+__global__ void NearestPointKernel(const Vec3* d_coord,
+    const Vec3* d_points,
+    Vec3* d_result,
+    int numCoord,
+    int numPoints)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= numCoord) return;
+
+    Vec3 query = d_coord[idx];
+
+    float minDist = 1e30f;
+    Vec3 nearest = Vec3();
+
+    for (int i = 0; i < numPoints; ++i) {
+        float dist = (query - d_points[i]).squaredNorm();
+        if (dist < minDist) {
+            minDist = dist;
+            nearest = d_points[i];
+        }
+    }
+
+    d_result[idx] = nearest;
 }
 
-// 使用空间分割的优化内核（需要预先构建空间结构）
-__global__ void ComputeDistanceFieldSpatialKernel(
-    const float *points, int num_points, const float *coords, int num_voxels,
-    const int *point_indices, const int *grid_structure, float *distances,
-    int grid_size, float cell_size) {
+// ============= 对外调用函数 =============
+void ComputeNearestPointsCUDA(
+    const std::vector<std::vector<std::vector<Eigen::Vector3f>>>& Coord,
+    const std::vector<std::vector<float>>& PointList,
+    std::vector<std::vector<std::vector<Eigen::Vector3f>>>& NearestPoint)
+{
+    int xSize = (int)Coord.size();
+    if (xSize == 0) return;
+    int ySize = (int)Coord[0].size();
+    int zSize = (int)Coord[0][0].size();
+    int total = xSize * ySize * zSize;
+    int numPoints = (int)PointList.size();
 
-  // 这里可以实现基于空间分割的优化算法
-  // 需要预先在CPU上构建空间栅格结构
-  // 实现相对复杂，这里提供框架
+    // ---- flatten Coord ----
+    std::vector<Vec3> flatCoord;
+    flatCoord.reserve(total);
+    for (int i = 0; i < xSize; ++i)
+        for (int j = 0; j < ySize; ++j)
+            for (int k = 0; k < zSize; ++k)
+                flatCoord.emplace_back(Coord[i][j][k]);
+
+    // ---- convert PointList ----
+    std::vector<Vec3> ptList;
+    ptList.reserve(numPoints);
+    for (int i = 0; i < numPoints; ++i)
+        ptList.emplace_back(PointList[i][0], PointList[i][1], PointList[i][2]);
+
+    // ---- allocate device ----
+    Vec3* d_coord = nullptr, * d_points = nullptr, * d_result = nullptr;
+    checkCuda(cudaMalloc(&d_coord, sizeof(Vec3) * total), "Malloc d_coord");
+    checkCuda(cudaMalloc(&d_points, sizeof(Vec3) * numPoints), "Malloc d_points");
+    checkCuda(cudaMalloc(&d_result, sizeof(Vec3) * total), "Malloc d_result");
+
+    // ---- copy to GPU ----
+    checkCuda(cudaMemcpy(d_coord, flatCoord.data(), sizeof(Vec3) * total, cudaMemcpyHostToDevice), "Memcpy d_coord");
+    if (numPoints > 0)
+        checkCuda(cudaMemcpy(d_points, ptList.data(), sizeof(Vec3) * numPoints, cudaMemcpyHostToDevice), "Memcpy d_points");
+
+    // ---- launch kernel ----
+    const int threads = 256;
+    const int blocks = (total + threads - 1) / threads;
+    NearestPointKernel << <blocks, threads >> > (d_coord, d_points, d_result, total, numPoints);
+    checkCuda(cudaGetLastError(), "Kernel launch");
+    checkCuda(cudaDeviceSynchronize(), "Sync after kernel");
+
+    // ---- copy results back ----
+    std::vector<Vec3> flatResult(total);
+    checkCuda(cudaMemcpy(flatResult.data(), d_result, sizeof(Vec3) * total, cudaMemcpyDeviceToHost), "Memcpy back");
+
+    // ---- unflatten ----
+    NearestPoint.resize(xSize);
+    int idx = 0;
+    for (int i = 0; i < xSize; ++i) {
+        NearestPoint[i].resize(ySize);
+        for (int j = 0; j < ySize; ++j) {
+            NearestPoint[i][j].resize(zSize);
+            for (int k = 0; k < zSize; ++k) {
+                Vec3 v = flatResult[idx++];
+                NearestPoint[i][j][k] = Eigen::Vector3f(v.x, v.y, v.z);
+            }
+        }
+    }
+
+    cudaFree(d_coord);
+    cudaFree(d_points);
+    cudaFree(d_result);
 }

@@ -4,6 +4,12 @@ build/
 
 build/*
 
+VSbuild
+
+VSbuild/
+
+VSbuild/*
+
 TestData
 
 TestData/

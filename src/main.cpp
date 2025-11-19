@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
   }
   DistanceField.GridScalar(SampleSize);
   DistanceField.ComputeDistanceField();
-  DistanceField.SaveFieldToBinary("distance_field.bin");
+  // DistanceField.SaveFieldToBinary("distance_field.bin");
 
   std::cout << "DistanceField Build" << std::endl;
 
