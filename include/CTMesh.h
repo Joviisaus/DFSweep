@@ -28,11 +28,13 @@ public:
   CPoint &rgb() { return m_rgb; };
   CPoint &normal() { return m_normal; };
   int &label() { return m_label; };
+  bool &FeaturePoint() { return m_FeaturePoint; };
 
 protected:
   CPoint m_rgb;
   CPoint m_normal;
   int m_label;
+  bool m_FeaturePoint;
 };
 
 inline void CToolVertex::_from_string() {

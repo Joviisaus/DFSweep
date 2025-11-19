@@ -4,7 +4,7 @@
 #include <vector>
 
 void ComputeNearestPointsCUDA(
-    const std::vector<std::vector<std::vector<Eigen::Vector3f>>>& Coord,
-    const std::vector<std::vector<float>>& PointList,
-	std::vector<std::vector<std::vector<Eigen::Vector3f>>>& NearestPoint);
+    const std::vector<std::vector<std::vector<Eigen::Vector3f>>> &Coord,
+    const std::vector<std::vector<float>> &PointList,
+    std::vector<std::vector<std::vector<int>>> &NearestPoint);
 #endif

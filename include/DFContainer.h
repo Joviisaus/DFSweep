@@ -41,6 +41,7 @@ protected:
   MeshLib::CTMesh *mesh;
   float PatchSize;
   std::vector<std::vector<float>> PointList;
+  std::vector<int> PointIDList;
   std::vector<std::vector<std::vector<float>>> Field;
   std::vector<std::vector<std::vector<int>>> FieldLabel;
   std::vector<std::vector<std::vector<float>>> GradianceDiff;

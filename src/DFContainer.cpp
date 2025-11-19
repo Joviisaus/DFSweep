@@ -31,22 +31,32 @@ void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
     face->normal() = normal / face->area();
   }
   for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
+    static_cast<MeshLib::CToolVertex *>(viter.value())->FeaturePoint() = false;
     std::vector<float> pointcoord;
     pointcoord.clear();
     pointcoord.push_back(viter.value()->point()[0]);
     pointcoord.push_back(viter.value()->point()[1]);
     pointcoord.push_back(viter.value()->point()[2]);
     this->PointList.push_back(pointcoord);
+    this->PointIDList.push_back(viter.value()->id());
     Eigen::Vector3f normal = Eigen::Vector3f(0.0, 0.0, 0.0);
     MeshLib::CTMesh::CVertex *v = *viter;
+    int labelcount = 0;
+    int label = -2;
     for (MeshLib::CTMesh::VertexFaceIterator vfiter(v); !vfiter.end();
          vfiter++) {
-      MeshLib::CTMesh::CFace *f = *vfiter;
+      MeshLib::CToolFace *f = static_cast<MeshLib::CToolFace *>(vfiter.value());
+      int facelabel = f->label();
       if (f->area() < 1e-10)
         continue;
       normal += Eigen::Vector3f(f->normal()[0] * f->area(),
                                 f->normal()[1] * f->area(),
                                 f->normal()[2] * f->area());
+      if (label == -2)
+        label = facelabel;
+      else if (label != facelabel)
+        static_cast<MeshLib::CToolVertex *>(viter.value())->FeaturePoint() =
+            true;
     }
     normal.normalize();
     v->normal()[0] = normal[0];
@@ -528,17 +538,17 @@ void DistanceField::ComputeDistanceField() {
   }
 
 #ifdef ENABLE_CUDA
-  std::vector<std::vector<std::vector<Eigen::Vector3f>>> NearestPoint;
+  std::vector<std::vector<std::vector<int>>> NearestPoint;
   ComputeNearestPointsCUDA(this->Coord, this->PointList, NearestPoint);
 
   std::vector<std::vector<std::vector<Eigen::Vector4f>>> DistanceScalar;
 
   DistanceScalar.resize(xSize);
   for (int i = 0; i < xSize; ++i) {
-	  DistanceScalar[i].resize(ySize);
-	  for (int j = 0; j < ySize; ++j) {
-		  DistanceScalar[i][j].resize(zSize);
-	  }
+    DistanceScalar[i].resize(ySize);
+    for (int j = 0; j < ySize; ++j) {
+      DistanceScalar[i][j].resize(zSize);
+    }
   }
 
 #ifdef ENABLE_OMP
@@ -551,99 +561,80 @@ void DistanceField::ComputeDistanceField() {
         Eigen::Vector4f DistanceVector;
         DistanceVector.setZero();
 
-
         std::vector<float> nearestPoint;
         nearestPoint.resize(3);
+        int vid = this->PointIDList[NearestPoint[x][y][z]];
+        auto nearestVertex =
+            static_cast<MeshLib::CToolVertex *>(this->mesh->idVertex(vid));
+        nearestPoint[0] = nearestVertex->point()[0];
+        nearestPoint[1] = nearestVertex->point()[1];
+        nearestPoint[2] = nearestVertex->point()[2];
 
-        nearestPoint[0] = NearestPoint[x][y][z][0];
-        nearestPoint[1] = NearestPoint[x][y][z][1];
-        nearestPoint[2] = NearestPoint[x][y][z][2];
-
-        float minDistance = (point-Eigen::Vector3f(nearestPoint[0], nearestPoint[1], nearestPoint[2])).norm();
-
+        float minDistance =
+            (point -
+             Eigen::Vector3f(nearestPoint[0], nearestPoint[1], nearestPoint[2]))
+                .norm();
         if (!this->primes.empty()) {
-          for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
-            MeshLib::CToolVertex *v =
-                static_cast<MeshLib::CToolVertex *>(viter.value());
-            if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
-                abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
-                abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
-              bool FeaturePoint = false;
-              for (MeshLib::CTMesh::VertexVertexIterator vviter(v);
-                   !vviter.end(); ++vviter) {
-                if (static_cast<MeshLib::CToolVertex *>(vviter.value())
-                        ->label() != v->label()) {
-                  FeaturePoint = true;
-                  break;
-                }
-              }
-              if (FeaturePoint) {
-                Eigen::Vector3f pointOnMesh = Eigen::Vector3f(
-                    v->point()[0], v->point()[1], v->point()[2]);
-                Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
-                Eigen::Vector3f NormalOnMesh = Eigen::Vector3f(
-                    v->normal()[0], v->normal()[1], v->normal()[2]);
-                NormalOnMesh.normalize();
+          bool FeaturePoint = nearestVertex->FeaturePoint();
+          if (FeaturePoint) {
+            Eigen::Vector3f pointOnMesh = Eigen::Vector3f(
+                nearestVertex->point()[0], nearestVertex->point()[1],
+                nearestVertex->point()[2]);
+            Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
+            Eigen::Vector3f NormalOnMesh = Eigen::Vector3f(
+                nearestVertex->normal()[0], nearestVertex->normal()[1],
+                nearestVertex->normal()[2]);
+            NormalOnMesh.normalize();
 
-                if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
-                  minDistance = -abs(minDistance);
-                else
-                  minDistance = abs(minDistance);
+            if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
+              minDistance = -abs(minDistance);
+            else
+              minDistance = abs(minDistance);
+            DistanceVector[0] = 0;
+            DistanceVector[1] = 0;
+            DistanceVector[2] = 0;
+            DistanceVector[3] = minDistance;
+            this->FieldLabel[x][y][z] = -1;
 
-                DistanceVector[0] = 0;
-                DistanceVector[1] = 0;
-                DistanceVector[2] = 0;
-                DistanceVector[3] = minDistance;
-                this->FieldLabel[x][y][z] = -1;
-
-                break;
-              }
-              minDistance = this->DisCompute(point, v->label());
-
-              this->FieldLabel[x][y][z] = v->label();
-              Eigen::Vector3f VertexNormal = Eigen::Vector3f(
-                  v->normal()[0], v->normal()[1], v->normal()[2]);
-              Eigen::Vector3f vertexPoint =
-                  Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
-              if ((vertexPoint - point).dot(VertexNormal) < 0) {
-                DistanceVector[0] = -v->normal()[0];
-                DistanceVector[1] = -v->normal()[1];
-                DistanceVector[2] = -v->normal()[2];
-                DistanceVector[3] = -minDistance;
-              } else {
-                DistanceVector[0] = v->normal()[0];
-                DistanceVector[1] = v->normal()[1];
-                DistanceVector[2] = v->normal()[2];
-                DistanceVector[3] = minDistance;
-              }
-              break;
-            }
-          }
-        } 
-        else {
-          for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
-            MeshLib::CToolVertex *v =
-                static_cast<MeshLib::CToolVertex *>(viter.value());
-            if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
-                abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
-                abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
-              Eigen::Vector3f pointOnMesh =
-                  Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
-              Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
-              Eigen::Vector3f NormalOnMesh = Eigen::Vector3f(
-                  v->normal()[0], v->normal()[1], v->normal()[2]);
-
-              if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
-                minDistance = -minDistance;
-              DistanceVector[0] = v->normal()[0];
-              DistanceVector[1] = v->normal()[1];
-              DistanceVector[2] = v->normal()[2];
+          } else {
+            minDistance = this->DisCompute(point, nearestVertex->label());
+            this->FieldLabel[x][y][z] = nearestVertex->label();
+            Eigen::Vector3f VertexNormal = Eigen::Vector3f(
+                nearestVertex->normal()[0], nearestVertex->normal()[1],
+                nearestVertex->normal()[2]);
+            Eigen::Vector3f vertexPoint = Eigen::Vector3f(
+                nearestVertex->point()[0], nearestVertex->point()[1],
+                nearestVertex->point()[2]);
+            if ((vertexPoint - point).dot(VertexNormal) < 0) {
+              DistanceVector[0] = -nearestVertex->normal()[0];
+              DistanceVector[1] = -nearestVertex->normal()[1];
+              DistanceVector[2] = -nearestVertex->normal()[2];
+              DistanceVector[3] = -minDistance;
+            } else {
+              DistanceVector[0] = nearestVertex->normal()[0];
+              DistanceVector[1] = nearestVertex->normal()[1];
+              DistanceVector[2] = nearestVertex->normal()[2];
               DistanceVector[3] = minDistance;
-              break;
             }
           }
+        } else {
+          Eigen::Vector3f pointOnMesh = Eigen::Vector3f(
+              nearestVertex->point()[0], nearestVertex->point()[1],
+              nearestVertex->point()[2]);
+          Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
+          Eigen::Vector3f NormalOnMesh = Eigen::Vector3f(
+              nearestVertex->normal()[0], nearestVertex->normal()[1],
+              nearestVertex->normal()[2]);
+
+          if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
+            minDistance = -minDistance;
+          DistanceVector[0] = nearestVertex->normal()[0];
+          DistanceVector[1] = nearestVertex->normal()[1];
+          DistanceVector[2] = nearestVertex->normal()[2];
+          DistanceVector[3] = minDistance;
         }
-		DistanceScalar[x][y][z] = DistanceVector;
+
+        DistanceScalar[x][y][z] = DistanceVector;
       }
     }
   }
@@ -653,14 +644,14 @@ void DistanceField::ComputeDistanceField() {
 #endif
 
 #ifdef ENABLE_OMP
-#pragma omp parallel for collapse(3)
+// #pragma omp parallel for collapse(3)
 #endif // ENABLE_OMP
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
 
 #ifdef ENABLE_CUDA
-		  Eigen::Vector4f distance = DistanceScalar[i][j][k];
+        Eigen::Vector4f distance = DistanceScalar[i][j][k];
 #else
         Eigen::Vector4f distance = DistanceToMesh(i, j, k);
 #endif
