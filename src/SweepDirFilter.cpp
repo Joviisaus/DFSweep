@@ -2,8 +2,9 @@
 
 SweepDirFilter::SweepDirFilter(
     std::vector<Eigen::Vector3f> *SweepDir,
-    std::vector<std::vector<std::vector<std::vector<float>>>>
-        *SweepProjScalar) {
+    std::vector<std::vector<std::vector<std::vector<float>>>> *SweepProjScalar,
+
+    std::vector<std::vector<std::vector<int>>> FieldLabel) {
   this->SweepProjScalar = SweepProjScalar;
   this->SweepDir = SweepDir;
   this->MarkedSweep.resize(SweepDir->size());
@@ -11,7 +12,7 @@ SweepDirFilter::SweepDirFilter(
   this->xSize = this->SweepProjScalar[0][0].size();
   this->ySize = this->SweepProjScalar[0][0][0].size();
   this->zSize = this->SweepProjScalar[0][0][0][0].size();
-
+  this->FieldLabel = FieldLabel;
   this->RestField.resize(this->xSize);
   for (size_t i = 0; i < this->xSize; ++i) {
     this->RestField[i].resize(this->ySize);
@@ -62,6 +63,8 @@ int SweepDirFilter::Filting() {
         if (this->SweepProjScalar[0][MinDirID][x][y][z] < RotateZero) {
           RestField[x][y][z] = 0;
         }
+        if (this->FieldLabel[x][y][z] == -1)
+          RestField[x][y][z] = 0;
         if (RestField[x][y][z] == 1)
           RestSize++;
       }
@@ -73,9 +76,9 @@ int SweepDirFilter::Filting() {
 void SweepDirFilter::SweepDirFilting() {
   while (this->RestSize > 0) {
     int RestSize_Former = this->RestSize;
-    std::cout << "Rest Size: " << this->RestSize << std::endl;
     int Current_Poped_Filter_id = Filting();
-    if (RestSize_Former == RestSize) {
+    std::cout << "Rest Size: " << this->RestSize << std::endl;
+    if (RestSize_Former - RestSize < 1e-6 * xSize * ySize * zSize) {
       this->MarkedSweep[Current_Poped_Filter_id] = 0;
       break;
     }

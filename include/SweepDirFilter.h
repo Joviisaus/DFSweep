@@ -10,9 +10,11 @@ inline float RotateZero = 0.1;
 
 class SweepDirFilter {
 public:
-  SweepDirFilter(std::vector<Eigen::Vector3f> *SweepDir,
-                 std::vector<std::vector<std::vector<std::vector<float>>>>
-                     *SweepProjScalar);
+  SweepDirFilter::SweepDirFilter(
+      std::vector<Eigen::Vector3f> *SweepDir,
+      std::vector<std::vector<std::vector<std::vector<float>>>>
+          *SweepProjScalar,
+      std::vector<std::vector<std::vector<int>>> FieldLabel);
 
 protected:
   int Filting();
@@ -24,6 +26,7 @@ protected:
   int RestSize;
   std::vector<Eigen::Vector3f> *SweepDir;
   std::vector<int> MarkedSweep;
+  std::vector<std::vector<std::vector<int>>> FieldLabel;
   std::vector<std::vector<std::vector<std::vector<float>>>> *SweepProjScalar;
   std::vector<std::vector<std::vector<float>>> RestField;
 };

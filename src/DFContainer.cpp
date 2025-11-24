@@ -984,7 +984,7 @@ void DistanceField::SweepProjection_Regist() {
     this->SweepProjScalar.push_back(ProjScalar);
   }
 
-  SweepDirFilter sf(&this->SweepDir, &this->SweepProjScalar);
+  SweepDirFilter sf(&this->SweepDir, &this->SweepProjScalar, this->FieldLabel);
   SweepDirSpliter sp(this->mesh, &this->SweepDir, &this->SweepProjScalar,
                      this->FieldLabel);
 }

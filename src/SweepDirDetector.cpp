@@ -46,7 +46,7 @@ void SweepDirDetector::PlaneFeatureLineClustering() {
             primes[j].params[1], primes[j].params[2], primes[j].params[3]);
         Normal2.normalize();
         if (acos(abs(Normal1.dot(Normal2))) < ParallelAngel &&
-            abs(Normal1.norm() - 1) < 1e-16) {
+            abs(Normal1.norm() - 1) < 1e-6) {
           this->PlaneFeatureLine.push_back(Normal1);
         }
       }
