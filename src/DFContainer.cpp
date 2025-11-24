@@ -2,6 +2,7 @@
 #include "CTMesh.h"
 #include "SweepDirDetector.h"
 #include "SweepDirFilter.h"
+#include "SweepDirSpliter.h"
 #include <Eigen/src/Core/Matrix.h>
 #include <cmath>
 
@@ -984,4 +985,6 @@ void DistanceField::SweepProjection_Regist() {
   }
 
   SweepDirFilter sf(&this->SweepDir, &this->SweepProjScalar);
+  SweepDirSpliter sp(this->mesh, &this->SweepDir, &this->SweepProjScalar,
+                     this->FieldLabel);
 }
