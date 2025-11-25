@@ -41,9 +41,49 @@ void SweepDirSpliter::LabelTopoGen() {
       }
     }
   }
+  for (int x = 0; x < this->SweepProjScalar[0][0].size(); x++) {
+    for (int y = 0; y < this->SweepProjScalar[0][0][0].size(); y++) {
+      for (int z = 0; z < this->SweepProjScalar[0][0][0][0].size(); z++) {
+        int centerLabel = FieldLabel[x][y][z];
+        if (centerLabel < 0)
+          continue; // 无效标签跳过
+
+        std::set<int> neighLabels;
+        neighLabels.insert(centerLabel);
+
+        const int dir[6][3] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
+                               {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+
+        for (int k = 0; k < 6; k++) {
+          int nx = x + dir[k][0];
+          int ny = y + dir[k][1];
+          int nz = z + dir[k][2];
+
+          if (nx < 0 || ny < 0 || nz < 0 || nx >= FieldLabel.size() ||
+              ny >= FieldLabel[0].size() || nz >= FieldLabel[0][0].size())
+            continue;
+
+          int neighLabel = FieldLabel[nx][ny][nz];
+          if (neighLabel >= 0) {
+            neighLabels.insert(neighLabel);
+          }
+        }
+
+        if (neighLabels.size() > 1) {
+          for (int l1 : neighLabels) {
+            for (int l2 : neighLabels) {
+              if (l1 != l2) {
+                this->LabelTopo.coeffRef(l1, l2) = 1;
+                this->LabelTopo.coeffRef(l2, l1) = 1;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
-// RotateZero;
 void SweepDirSpliter::SweepDirSplit() {
   std::vector<std::vector<int>> EnergyLabel;
   EnergyLabel.clear();
@@ -140,19 +180,16 @@ void SweepDirSpliter::SweepMask(std::vector<std::vector<int>> &EnergyLabel) {
   int dimZ = this->SweepProjScalar[0][0][0][0].size();
   int numDirs = this->SweepDir[0].size();
 
-  // 预计算每个方向的label存在性
   std::vector<std::unordered_set<int>> dirLabelSets(numDirs);
   for (int dir = 0; dir < numDirs; dir++) {
     dirLabelSets[dir].insert(EnergyLabel[dir].begin(), EnergyLabel[dir].end());
   }
 
-  // 预计算每个体素的最大值方向
   std::vector<std::vector<std::vector<int>>> maxDirCache(
       dimX, std::vector<std::vector<int>>(dimY, std::vector<int>(dimZ, 0)));
 
 #ifdef ENABLE_OMP
 
-// 并行计算最大值方向
 #pragma omp parallel for collapse(2)
   for (int x = 0; x < dimX; x++) {
     for (int y = 0; y < dimY; y++) {

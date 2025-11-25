@@ -10,6 +10,7 @@
 inline double epsilon = 1e-2f;
 inline double PI = 3.1415926;
 inline int SampleSize = 100;
+inline float Alpha = 0.5;
 
 class DistanceField {
 public:
@@ -28,12 +29,17 @@ public:
   GetSweepProjScalar() {
     return this->SweepProjScalar;
   };
+  std::vector<std::vector<std::vector<std::vector<float>>>>
+  GetSweepProjEnergy() {
+    return this->SweepProjEnergy;
+  };
   std::vector<std::vector<std::vector<int>>> getGradianceCount() {
     return this->GradianceCount;
   };
   std::vector<std::vector<std::vector<float>>> getGradianceDiff() {
     return this->GradianceDiff;
   }
+
   void SaveFieldToBinary(const std::string &filename);
   void SaveGradianceToBinary(const std::string &filename);
 
@@ -52,6 +58,7 @@ protected:
   std::vector<Eigen::Vector3f> SweepDir;
   std::vector<PrimeData> primes;
   std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar;
+  std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjEnergy;
 
   int maxPointsPerNode = 32;
   int maxDepth = 8;

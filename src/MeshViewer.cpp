@@ -38,6 +38,7 @@ void MeshViewer::setGrid(
     std::vector<std::vector<std::vector<float>>> Field,
     std::vector<std::vector<std::vector<int>>> GradianceCount,
     std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar,
+    std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjEnergy,
     std::vector<std::vector<std::vector<float>>> GradianceDiff,
     std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord) {
   this->bound_low = {Coord.front().front().front()[0],
@@ -51,13 +52,17 @@ void MeshViewer::setGrid(
   this->dimX = Coord.size();
   this->dimY = Coord.front().size();
   this->dimZ = Coord.front().front().size();
-  SweepProjScalars.resize(SweepProjScalar.size());
+  this->SweepProjScalars.resize(SweepProjScalar.size());
+  this->SweepProjEnergies.resize(SweepProjEnergy.size());
   size_t totalSize = this->dimX * this->dimY * this->dimZ;
   this->scalarVals = new float[totalSize];
   this->GradianceScalar = new int[totalSize];
   this->GradianceDiff = new float[totalSize];
   for (int i = 0; i < SweepProjScalars.size(); i++) {
     SweepProjScalars[i] = new float[totalSize];
+  }
+  for (int i = 0; i < SweepProjEnergy.size(); i++) {
+    SweepProjEnergies[i] = new float[totalSize];
   }
   size_t index = 0;
   for (size_t z = 0; z < this->dimZ; ++z) {
@@ -68,6 +73,10 @@ void MeshViewer::setGrid(
         this->GradianceDiff[index] = GradianceDiff[x][y][z];
         for (int i = 0; i < SweepProjScalars.size(); i++) {
           SweepProjScalars[i][index] = SweepProjScalar[i][x][y][z];
+        }
+
+        for (int i = 0; i < SweepProjEnergies.size(); i++) {
+          SweepProjEnergies[i][index] = SweepProjEnergy[i][x][y][z];
         }
         index++;
       }
@@ -92,6 +101,13 @@ int MeshViewer::show() {
     std::string str = "Accept for Sweep Direction " + std::to_string(i);
     psGrid->addNodeScalarQuantity(str,
                                   std::make_tuple(SweepProjScalars[i], nData));
+  };
+  for (int i = 0; i < SweepProjEnergies.size(); i++) {
+    std::string str = "Sweep Energy " + std::to_string(i);
+    psGrid
+        ->addNodeScalarQuantity(str,
+                                std::make_tuple(SweepProjEnergies[i], nData))
+        ->setColorMap("coolwarm");
   };
   scalarQ->setEnabled(true);
   polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;

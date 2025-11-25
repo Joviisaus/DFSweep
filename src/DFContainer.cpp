@@ -985,6 +985,33 @@ void DistanceField::SweepProjection_Regist() {
   }
 
   SweepDirFilter sf(&this->SweepDir, &this->SweepProjScalar, this->FieldLabel);
-  SweepDirSpliter sp(this->mesh, &this->SweepDir, &this->SweepProjScalar,
+  this->SweepProjEnergy = this->SweepProjScalar;
+  SweepDirSpliter sp(this->mesh, &this->SweepDir, &this->SweepProjEnergy,
                      this->FieldLabel);
+  int DirSize = this->SweepDir.size();
+  auto SweepEnergy = this->SweepProjEnergy;
+
+  for (int dirs = 0; dirs < this->SweepProjEnergy.size(); dirs++) {
+    for (int x = 0; x < this->SweepProjEnergy[dirs].size(); x++) {
+      for (int y = 0; y < this->SweepProjEnergy[dirs][x].size(); y++) {
+        for (int z = 0; z < this->SweepProjEnergy[dirs][x][y].size(); z++) {
+          if (this->FieldLabel[x][y][z] == -1) {
+            SweepEnergy[dirs][x][y][z] = -1e-4;
+            continue;
+          }
+          float OtherEnergy = 0;
+          for (int RestDirs = 0; RestDirs < this->SweepProjEnergy.size();
+               RestDirs++) {
+            if (RestDirs != dirs)
+              OtherEnergy += -this->SweepProjEnergy[RestDirs][x][y][z];
+          }
+          float SelfEnergy = this->SweepProjEnergy[dirs][x][y][z];
+          SelfEnergy *= (DirSize - 2);
+          SweepEnergy[dirs][x][y][z] =
+              Alpha * SelfEnergy + (1 - Alpha) * OtherEnergy;
+        }
+      }
+    }
+  }
+  this->SweepProjEnergy = SweepEnergy;
 }
