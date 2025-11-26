@@ -1,5 +1,6 @@
 #ifndef __DFCONTAINER_H__
 #define __DFCONTAINER_H__
+#include "CuttingBox.h"
 #include "OctTree.h"
 #include "SweepDirDetector.h"
 #include "SweepDirFilter.h"
@@ -10,7 +11,7 @@
 inline double epsilon = 1e-2f;
 inline double PI = 3.1415926;
 inline int SampleSize = 100;
-inline float Alpha = 0.5;
+inline float Alpha = 0.7;
 
 class DistanceField {
 public:
@@ -39,6 +40,9 @@ public:
   std::vector<std::vector<std::vector<float>>> getGradianceDiff() {
     return this->GradianceDiff;
   }
+  std::vector<std::map<int, Eigen::Vector3f>> getCuttingHex() {
+    return this->CuttingHexLists;
+  };
 
   void SaveFieldToBinary(const std::string &filename);
   void SaveGradianceToBinary(const std::string &filename);
@@ -52,6 +56,7 @@ protected:
   std::vector<std::vector<std::vector<int>>> FieldLabel;
   std::vector<std::vector<std::vector<float>>> GradianceDiff;
   std::vector<std::vector<std::vector<int>>> GradianceCount;
+  std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists;
 
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> GradianceField;
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord;

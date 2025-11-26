@@ -675,9 +675,6 @@ void DistanceField::ComputeDistanceField() {
       GradianceDiff[i][j].resize(zSize);
     }
   }
-#ifdef ENABLE_OMP
-#pragma omp parallel for collapse(3)
-#endif // ENABLE_OMP
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
@@ -990,13 +987,14 @@ void DistanceField::SweepProjection_Regist() {
                      this->FieldLabel);
   int DirSize = this->SweepDir.size();
   auto SweepEnergy = this->SweepProjEnergy;
+  float patch = (this->Coord[0][0][0] - this->Coord[0][0][1]).norm();
 
   for (int dirs = 0; dirs < this->SweepProjEnergy.size(); dirs++) {
     for (int x = 0; x < this->SweepProjEnergy[dirs].size(); x++) {
       for (int y = 0; y < this->SweepProjEnergy[dirs][x].size(); y++) {
         for (int z = 0; z < this->SweepProjEnergy[dirs][x][y].size(); z++) {
-          if (this->FieldLabel[x][y][z] == -1) {
-            SweepEnergy[dirs][x][y][z] = -1e-4;
+          if (this->FieldLabel[x][y][z] == -1 && this->Field[x][y][z] > 0) {
+            SweepEnergy[dirs][x][y][z] = -1e-2;
             continue;
           }
           float OtherEnergy = 0;
@@ -1009,9 +1007,18 @@ void DistanceField::SweepProjection_Regist() {
           SelfEnergy *= (DirSize - 2);
           SweepEnergy[dirs][x][y][z] =
               Alpha * SelfEnergy + (1 - Alpha) * OtherEnergy;
+          if (abs(this->Field[x][y][z]) < patch)
+            SweepEnergy[dirs][x][y][z] -= 2e-2;
+          if (this->Field[x][y][z] < 0)
+            SweepEnergy[dirs][x][y][z] = 1e-2;
         }
       }
     }
   }
   this->SweepProjEnergy = SweepEnergy;
+
+  for (int i = 0; i < this->SweepDir.size(); i++) {
+    CuttingBox cb(SweepDir, SweepProjEnergy, Coord, i);
+    this->CuttingHexLists.push_back(cb.GetBoxVertices());
+  }
 }

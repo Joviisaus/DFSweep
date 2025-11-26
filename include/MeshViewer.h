@@ -3,6 +3,7 @@
 
 #include "CTMesh.h"
 #include "glm/fwd.hpp"
+#include "polyscope/curve_network.h"
 #include "polyscope/polyscope.h"
 #include "polyscope/surface_mesh.h"
 #include "polyscope/volume_grid.h"
@@ -17,6 +18,7 @@ public:
       std::vector<std::vector<std::vector<int>>> GradianceCount,
       std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar,
       std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjEnergy,
+      std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists,
       std::vector<std::vector<std::vector<float>>> GradianceDiff,
       std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord);
 
@@ -32,6 +34,7 @@ protected:
   int *GradianceScalar;
   std::vector<float *> SweepProjScalars;
   std::vector<float *> SweepProjEnergies;
+  std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists;
   std::vector<std::vector<float>> vertices;
   std::vector<std::vector<int>> faces;
 };

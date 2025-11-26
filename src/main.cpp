@@ -19,8 +19,10 @@ int main(int argc, char **argv) {
   app.add_option("-r,--RotateZero", RotateZero,
                  "RotateZero is difining max rotation angel in each sweep "
                  "direction,default is 0.1");
-  app.add_option("-a,--ParallelAngel", ParallelAngel,
+  app.add_option("-d,--ParallelAngel", ParallelAngel,
                  "Adjust if a pair of plane is parallel,default is 1e-2");
+  app.add_option("-a,--alpha", Alpha,
+                 "Parament in Energy Function,default is 0.5");
   app.add_option("-p,--primefile", prime_file,
                  "Prime File if a Smooth Field is Needed")
       ->check(CLI::ExistingFile);
@@ -64,6 +66,7 @@ int main(int argc, char **argv) {
   viewer.setGrid(DistanceField.getField(), DistanceField.getGradianceCount(),
                  DistanceField.GetSweepProjScalar(),
                  DistanceField.GetSweepProjEnergy(),
+                 DistanceField.getCuttingHex(),
                  DistanceField.getGradianceDiff(), DistanceField.getCoord());
   viewer.setMesh(&mesh);
   std::cout << "Grid and Mesh Settled" << std::endl;
