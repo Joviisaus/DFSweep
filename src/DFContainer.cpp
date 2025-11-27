@@ -1018,7 +1018,8 @@ void DistanceField::SweepProjection_Regist() {
   this->SweepProjEnergy = SweepEnergy;
 
   for (int i = 0; i < this->SweepDir.size(); i++) {
-    CuttingBox cb(SweepDir, SweepProjEnergy, Coord, i);
+    CuttingBox cb(SweepDir, SweepProjEnergy, Coord, this->FieldLabel,
+                  this->Field, i);
     this->CuttingHexLists.push_back(cb.GetBoxVertices());
   }
 }

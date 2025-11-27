@@ -14,7 +14,8 @@ public:
   CuttingBox(std::vector<Eigen::Vector3f> SweepDir,
              std::vector<std::vector<std::vector<std::vector<float>>>> Energy,
              std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord,
-             int id);
+             std::vector<std::vector<std::vector<int>>> FieldLabel,
+             std::vector<std::vector<std::vector<float>>> Field, int id);
   std::map<int, Eigen::Vector3f> GetBoxVertices();
 
 protected:
@@ -22,6 +23,8 @@ protected:
   std::vector<Eigen::Vector3f> SweepDir;
   std::vector<std::vector<std::vector<std::vector<float>>>> Energy;
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord;
+  std::vector<std::vector<std::vector<int>>> FieldLabel;
+  std::vector<std::vector<std::vector<float>>> Field;
   Eigen::Vector3f dirx;
   Eigen::Vector3f diry;
   Eigen::Vector3f dirz;

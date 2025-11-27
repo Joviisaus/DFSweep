@@ -3,10 +3,15 @@
 CuttingBox::CuttingBox(
     std::vector<Eigen::Vector3f> SweepDir,
     std::vector<std::vector<std::vector<std::vector<float>>>> Energy,
-    std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord, int id) {
+    std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord,
+    std::vector<std::vector<std::vector<int>>> FieldLabel,
+
+    std::vector<std::vector<std::vector<float>>> Field, int id) {
   this->SweepDir = SweepDir;
   this->Coord = Coord;
   this->Energy = Energy;
+  this->FieldLabel = FieldLabel;
+  this->Field = Field;
   this->id = id;
   STEP_SIZE = (this->Coord[0][0][0] - this->Coord[0][0][1]).norm();
   this->DirCompute();
@@ -274,32 +279,48 @@ float CuttingBox::ComputeTotalEnergy() {
   return total_energy;
 }
 void CuttingBox::PositionInit() {
-  MinX = FLT_MAX;
-  MinY = FLT_MAX;
-  MinZ = FLT_MAX;
-  MaxX = FLT_MIN;
-  MaxY = FLT_MIN;
-  MaxZ = FLT_MIN;
+  this->MinX = 99999;
+  this->MinY = 99999;
+  this->MinZ = 99999;
+  this->MaxX = -99999;
+  this->MaxY = -99999;
+  this->MaxZ = -99999;
+  int MinEnergyLabel = -1;
+  float MinEnergy = FLT_MAX;
+  for (size_t x = 0; x < this->Energy[id].size(); x++) {
+    for (size_t y = 0; y < this->Energy[id][0].size(); y++) {
+      for (size_t z = 0; z < this->Energy[id][0][0].size(); z++) {
+        if (this->Energy[id][x][y][z] < MinEnergy) {
+          MinEnergy = this->Energy[id][x][y][z];
+          MinEnergyLabel = this->FieldLabel[x][y][z];
+        }
+      }
+    }
+  }
   for (size_t x = 0; x < this->Energy[id].size(); x++) {
     for (size_t y = 0; y < this->Energy[id][0].size(); y++) {
       for (size_t z = 0; z < this->Energy[id][0][0].size(); z++) {
         if (this->Energy[id][x][y][z] > -1e-1)
           continue;
+        // if (this->FieldLabel[x][y][z] != MinEnergyLabel ||
+        //     this->Field[x][y][z] < 0)
+        //   continue;
         float dx = this->Coord[x][y][z].dot(dirx);
         float dy = this->Coord[x][y][z].dot(diry);
         float dz = this->Coord[x][y][z].dot(dirz);
-        if (dx < MinX)
-          MinX = dx;
-        if (dx > MaxX)
-          MaxX = dx;
-        if (dy < MinY)
-          MinY = dy;
-        if (dy > MaxY)
-          MaxY = dy;
-        if (dz < MinZ)
-          MinZ = dz;
-        if (dz > MaxZ)
-          MaxZ = dz;
+        if (dx < this->MinX)
+          this->MinX = dx;
+        if (dx > this->MaxX) {
+          this->MaxX = dx;
+        }
+        if (dy < this->MinY)
+          this->MinY = dy;
+        if (dy > this->MaxY)
+          this->MaxY = dy;
+        if (dz < this->MinZ)
+          this->MinZ = dz;
+        if (dz > this->MaxZ)
+          this->MaxZ = dz;
       }
     }
   }
