@@ -67,6 +67,7 @@ int main(int argc, char **argv) {
                  DistanceField.GetSweepProjScalar(),
                  DistanceField.GetSweepProjEnergy(),
                  DistanceField.getCuttingHex(),
+                 DistanceField.getSweepDir(),
                  DistanceField.getGradianceDiff(), DistanceField.getCoord());
   viewer.setMesh(&mesh);
   std::cout << "Grid and Mesh Settled" << std::endl;

@@ -20,32 +20,40 @@ CuttingBox::CuttingBox(
 }
 
 /**
- * @brief Computes MatchingEnergy for all sweep directions and finds the three
- * directions corresponding to the minimum energies that are non-coplanar.
+ * @brief Computes MatchingEnergy for all sweep directions relative to the
+ * region defined by this->id, and selects three non-coplanar directions:
+ * 1. dirx is fixed to SweepDir[this->id].
+ * 2. diry and dirz are selected from the remaining directions based on minimum
+ * MatchingEnergy and non-coplanarity relative to the chosen axes.
  */
 void CuttingBox::DirCompute() {
-  // 1. Initialize Direction Vectors
-  // Set initial output directions to zero vector
+  // 1. 初始化方向向量
   this->dirx = Eigen::Vector3f::Zero();
   this->diry = Eigen::Vector3f::Zero();
   this->dirz = Eigen::Vector3f::Zero();
 
-  // 2. Calculate MatchingEnergy
-  std::vector<float> MatchingEnergy;
-  MatchingEnergy.resize(this->SweepDir.size());
+  // 检查 this->id 是否在范围内
+  if (this->id < 0 || this->id >= this->SweepDir.size()) {
+    std::cerr << "Error: Invalid ID for SweepDir array." << std::endl;
+    std::cout << "Single Sweep Volume;" << std::endl;
+    return;
+  }
 
-  // Vector to store (Energy, Original Index) pairs for easy sorting
+  // 强制设置 dirx 为 this->SweepDir[this->id]
+  this->dirx = this->SweepDir[this->id];
+
+  // 2. 计算 MatchingEnergy (排除 this->id 自身)
+  // 存储 (Energy, Original Index) 对，用于排序
   std::vector<std::pair<float, int>> energy_index_pairs;
   energy_index_pairs.reserve(this->SweepDir.size());
 
   for (int index = 0; index < this->SweepDir.size(); index++) {
     float ME = 0;
     if (index == this->id) {
-      // Set the energy for the box's own ID to MAX, ensuring it's excluded
-      // from the minimum search after sorting.
+      // 将自身的能量设为最大值，确保它不会被选中作为 diry 或 dirz
       ME = FLT_MAX;
     } else {
-      // Original MatchingEnergy calculation logic:
+      // MatchingEnergy calculation logic:
       // Sum Energy[index] where Energy[id] is less than a negative threshold.
       for (size_t x = 0; x < this->Energy[index].size(); x++) {
         for (size_t y = 0; y < this->Energy[index][0].size(); y++) {
@@ -58,87 +66,91 @@ void CuttingBox::DirCompute() {
       }
     }
 
-    // Store the calculated Energy and its original index
-    energy_index_pairs.push_back({ME, index});
-    MatchingEnergy[index] =
-        ME; // Keep this for consistency with the initial code structure
+    // 只需要存储用于选择 diry, dirz 的方向
+    if (index != this->id) {
+      energy_index_pairs.push_back({ME, index});
+    }
   }
 
-  // 3. Sort by MatchingEnergy
-  // Sort the pairs in ascending order of Energy (find the minimums first)
+  // 3. 排序 (按 MatchingEnergy 升序排列，即找最小能量)
   std::sort(energy_index_pairs.begin(), energy_index_pairs.end(),
             [](const std::pair<float, int> &a, const std::pair<float, int> &b) {
               return a.first < b.first;
             });
 
-  // 4. Find the three smallest non-coplanar directions
-
-  // Stores the indices of the three selected directions
-  std::vector<int> final_indices;
-  final_indices.reserve(3);
-
-  // Tolerance for floating-point comparisons (to check for zero cross/mixed
-  // products)
+  // 4. 选择 diry 和 dirz
+  std::vector<int> final_indices; // 存储 diry 和 dirz 的索引
+  final_indices.reserve(2);
   const float PLANE_TOLERANCE = 1e-4f;
+
+  // 临时存储 diry 的索引和向量
+  Eigen::Vector3f temp_diry = Eigen::Vector3f::Zero();
 
   for (const auto &pair : energy_index_pairs) {
     int current_index = pair.second;
-
-    // Skip the box's own index if it wasn't already excluded by FLT_MAX
-    if (current_index == this->id) {
-      continue;
-    }
-
     const Eigen::Vector3f &v_current = this->SweepDir[current_index];
 
     if (final_indices.empty()) {
-      // First direction: Always accepted
-      final_indices.push_back(current_index);
-      this->dirx = v_current;
-    } else if (final_indices.size() == 1) {
-      // Second direction: Must be non-parallel (linearly independent) to the
-      // first
-      const Eigen::Vector3f &v1 = this->dirx;
-
-      // Check for non-parallelism: cross product magnitude > tolerance
-      if ((v1.cross(v_current)).norm() > PLANE_TOLERANCE) {
+      // 寻找 diry: 必须与 dirx 不平行
+      // 检查非平行性：叉积的模长 > 容差
+      if ((this->dirx.cross(v_current)).norm() > PLANE_TOLERANCE) {
         final_indices.push_back(current_index);
-        this->diry = v_current;
+        temp_diry = v_current;
       }
-    } else if (final_indices.size() == 2) {
-      // Third direction: Must be non-coplanar to the first two
-      const Eigen::Vector3f &v1 = this->dirx;
-      const Eigen::Vector3f &v2 = this->diry;
+    } else if (final_indices.size() == 1) {
+      // 寻找 dirz: 必须与 dirx 和 diry 不共面
 
-      // Check for non-coplanarity: Absolute value of the Scalar Triple Product
-      // (mixed product) > tolerance Mixed product: v1 . (v2 x v_current)
-      float mixed_product = std::abs(v1.dot(v2.cross(v_current)));
+      // 检查非共面性：混合积的绝对值 > 容差
+      // 混合积: dirx . (temp_diry x v_current)
+      float mixed_product =
+          std::abs(this->dirx.dot(temp_diry.cross(v_current)));
 
       if (mixed_product > PLANE_TOLERANCE) {
         final_indices.push_back(current_index);
-        this->dirz = v_current;
+        this->diry = temp_diry; // 确认 diry
+        this->dirz = v_current; // 确认 dirz
 
-        // Found three non-coplanar vectors, stop searching
+        // 找到了两个，停止搜索
         break;
       }
     }
   }
 
-  // Optional: Log a warning if not enough non-coplanar vectors were found.
-  if (final_indices.size() < 3) {
-    if (final_indices.size() == 2) {
-      this->dirx = this->SweepDir[final_indices[0]];
-      this->diry = this->SweepDir[final_indices[1]];
-      this->dirz = this->dirx.cross(this->diry);
-      return;
+  // 5. Post-processing and Final Assignment
+
+  if (final_indices.size() == 2) {
+    // Case 1: 找到了 diry 和 dirz
+    // dirx, diry, dirz 已在上一步赋值
+
+  } else if (final_indices.size() == 1) {
+    // Case 2: 只找到了 diry (temp_diry), dirz 需要合成
+    this->diry = temp_diry; // 确认 diry
+
+    // 计算叉积合成 dirz
+    Eigen::Vector3f cross_dir = this->dirx.cross(this->diry);
+
+    // 检查叉积是否有效（理论上非平行向量的叉积不会是零向量）
+    if (cross_dir.norm() < PLANE_TOLERANCE) {
+      // 理论上不会发生，除非 dirx 和 diry 叉积失败，
+      // 此时回退到 Single Sweep 逻辑
+      final_indices.clear(); // 强制进入 Single Sweep 状态
     } else {
-      std::cout << "Single Sweep Volume;" << std::endl;
-      return;
+      this->dirz = cross_dir;
     }
   }
-  this->dirx = this->SweepDir[final_indices[0]];
-  this->diry = this->SweepDir[final_indices[1]];
-  this->dirz = this->SweepDir[final_indices[2]];
+
+  if (final_indices.size() < 1) {
+    // Case 3: 只找到了 dirx，或一个方向都没找到（极少情况）
+    std::cout << "Single Sweep Volume;" << std::endl;
+
+    // 清除 diry, dirz，仅保留 dirx (由步骤 1 设置)
+    this->dirx = this->SweepDir[this->id]; // 确保 dirx 仍然是固定的初始方向
+    this->diry = Eigen::Vector3f::Zero();
+    this->dirz = Eigen::Vector3f::Zero();
+    return;
+  }
+
+  // 6. 最终归一化: 确保 dirx, diry, dirz 都是单位向量
   this->dirx.normalize();
   this->diry.normalize();
   this->dirz.normalize();
@@ -158,7 +170,7 @@ void CuttingBox::TunePosition() {
   float previous_energy = std::numeric_limits<float>::max();
   int iteration = 0;
 
-  std::cout << "Starting Energy:" << current_energy << std::endl;
+  std::cout << "Starting Energy:" << current_energy;
 
   while (iteration < MAX_ITERATIONS &&
          std::abs(previous_energy - current_energy) > ENERGY_TOLERANCE) {
@@ -241,6 +253,8 @@ void CuttingBox::TunePosition() {
     }
 
   } // End of while loop
+  //
+  std::cout << " Tuned Energy: " << current_energy << std::endl;
 }
 float CuttingBox::ComputeTotalEnergy() {
   float total_energy = 0.0f;

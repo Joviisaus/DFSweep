@@ -17,6 +17,8 @@ void SweepDirDetector::PlaneFeatureLineClustering() {
   for (MeshLib::MeshEdgeIterator meiter(this->mesh); !meiter.end(); meiter++) {
     MeshLib::CToolEdge *edge =
         static_cast<MeshLib::CToolEdge *>(meiter.value());
+    if (edge->boundary())
+      continue;
     int label1 =
         static_cast<MeshLib::CToolFace *>(edge->halfedge(0)->face())->label();
 

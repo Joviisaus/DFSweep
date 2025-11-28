@@ -11,7 +11,7 @@
 inline double epsilon = 1e-2f;
 inline double PI = 3.1415926;
 inline int SampleSize = 100;
-inline float Alpha = 0.7;
+inline float Alpha = 0.6;
 
 class DistanceField {
 public:
@@ -44,6 +44,7 @@ public:
     return this->CuttingHexLists;
   };
 
+  std::vector<Eigen::Vector3f> getSweepDir() { return this->SweepDir; }
   void SaveFieldToBinary(const std::string &filename);
   void SaveGradianceToBinary(const std::string &filename);
 
@@ -87,6 +88,9 @@ protected:
                                          const Eigen::Vector3f &v0,
                                          const Eigen::Vector3f &v1,
                                          const Eigen::Vector3f &v2);
+
+  bool insideCuttingBox(Eigen::Vector3f point,
+                        const std::map<int, Eigen::Vector3f> &verticesMap);
   std::shared_ptr<OctreeNode> octreeRoot;
 };
 

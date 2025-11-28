@@ -777,9 +777,127 @@ void DistanceField::ComputeDistanceField() {
       }
     }
   }
-  std::cout << "CrossField Build" << std::endl;
   if (this->primes.size() != 0)
     this->SweepProjection_Regist();
+
+  for (MeshLib::MeshVertexIterator mviter(mesh); !mviter.end(); ++mviter) {
+    MeshLib::CToolVertex *v =
+        static_cast<MeshLib::CToolVertex *>(mviter.value());
+    Eigen::Vector3f position =
+        Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
+    for (int i = 0; i < this->CuttingHexLists.size(); i++) {
+      if (this->insideCuttingBox(position, CuttingHexLists[i])) {
+        v->rgb()[0] = abs(this->SweepDir[i][0]);
+        v->rgb()[1] = abs(this->SweepDir[i][1]);
+        v->rgb()[2] = abs(this->SweepDir[i][2]);
+        continue;
+      }
+    }
+  }
+}
+
+/**
+ * @brief Checks if a point is inside the hexahedron defined by its 8 vertices.
+ * * Uses Point-to-Plane test with corrected external normal vectors.
+ */
+bool DistanceField::insideCuttingBox(
+    Eigen::Vector3f point, const std::map<int, Eigen::Vector3f> &verticesMap) {
+
+  if (verticesMap.size() != 8) {
+    std::cerr << "Error in insideCuttingBox: Vertex map size is not 8."
+              << std::endl;
+    return false;
+  }
+
+  // 1. 获取关键顶点 (Min/Max 组合)
+  // V0: (Min, Min, Min)
+  // V1: (Min, Min, Max)
+  // V2: (Min, Max, Min)
+  // V3: (Min, Max, Max)
+  // V4: (Max, Min, Min)
+  // V5: (Max, Min, Max)
+  // V6: (Max, Max, Min)
+  // V7: (Max, Max, Max)
+
+  // 使用 .at() 确保键存在
+  const Eigen::Vector3f &v0 = verticesMap.at(0);
+  const Eigen::Vector3f &v1 = verticesMap.at(1);
+  const Eigen::Vector3f &v2 = verticesMap.at(2);
+  const Eigen::Vector3f &v4 = verticesMap.at(4);
+
+  // 2. 推导三个基本方向的向量 (这些向量不需要归一化)
+  Eigen::Vector3f dirX_vec = v4 - v0;
+  Eigen::Vector3f dirY_vec = v2 - v0;
+  Eigen::Vector3f dirZ_vec = v1 - v0;
+
+  // 3. 计算三个轴的法向量 nX, nY, nZ
+  const float EPSILON = 1e-6f;
+
+  // a. X-Planes 法向量 nX (垂直于 dirY 和 dirZ)
+  Eigen::Vector3f nX = dirY_vec.cross(dirZ_vec).normalized();
+  // b. Y-Planes 法向量 nY (垂直于 dirX 和 dirZ)
+  Eigen::Vector3f nY = dirX_vec.cross(dirZ_vec).normalized();
+  // c. Z-Planes 法向量 nZ (垂直于 dirX 和 dirY)
+  Eigen::Vector3f nZ = dirX_vec.cross(dirY_vec).normalized();
+
+  // 4. 定义六个平面并进行点测试 (平面方程: n_ext . P + d = 0)
+  // 要求：n_ext 指向盒外。如果 n_ext . P + d > 0，则点在盒外。
+
+  // --- X 边界 ---
+
+  // 确定 nX 的指向性: nX 是否指向 MaxX 方向 (V4 - V0)
+  bool nX_points_to_maxX = (nX.dot(dirX_vec) > 0);
+
+  // MinX 平面: 通过 V0。法向量 n_minX 应该指向 -dirX 方向
+  Eigen::Vector3f n_minX = nX_points_to_maxX ? -nX : nX;
+  float d_minX = -n_minX.dot(v0);
+
+  // MaxX 平面: 通过 V4。法向量 n_maxX 应该指向 +dirX 方向
+  Eigen::Vector3f n_maxX = nX_points_to_maxX ? nX : -nX;
+  float d_maxX = -n_maxX.dot(v4);
+
+  if (n_minX.dot(point) + d_minX > EPSILON)
+    return false; // P 在 MinX 外侧
+  if (n_maxX.dot(point) + d_maxX > EPSILON)
+    return false; // P 在 MaxX 外侧
+
+  // --- Y 边界 ---
+
+  // 确定 nY 的指向性: nY 是否指向 MaxY 方向 (V2 - V0)
+  bool nY_points_to_maxY = (nY.dot(dirY_vec) > 0);
+
+  // MinY 平面: 通过 V0。法向量 n_minY 应该指向 -dirY 方向
+  Eigen::Vector3f n_minY = nY_points_to_maxY ? -nY : nY;
+  float d_minY = -n_minY.dot(v0);
+
+  // MaxY 平面: 通过 V2。法向量 n_maxY 应该指向 +dirY 方向
+  Eigen::Vector3f n_maxY = nY_points_to_maxY ? nY : -nY;
+  float d_maxY = -n_maxY.dot(v2);
+
+  if (n_minY.dot(point) + d_minY > EPSILON)
+    return false; // P 在 MinY 外侧
+  if (n_maxY.dot(point) + d_maxY > EPSILON)
+    return false; // P 在 MaxY 外侧
+
+  // --- Z 边界 ---
+
+  // 确定 nZ 的指向性: nZ 是否指向 MaxZ 方向 (V1 - V0)
+  bool nZ_points_to_maxZ = (nZ.dot(dirZ_vec) > 0);
+
+  // MinZ 平面: 通过 V0。法向量 n_minZ 应该指向 -dirZ 方向
+  Eigen::Vector3f n_minZ = nZ_points_to_maxZ ? -nZ : nZ;
+  float d_minZ = -n_minZ.dot(v0);
+
+  // MaxZ 平面: 通过 V1。法向量 n_maxZ 应该指向 +dirZ 方向
+  Eigen::Vector3f n_maxZ = nZ_points_to_maxZ ? nZ : -nZ;
+  float d_maxZ = -n_maxZ.dot(v1);
+
+  if (n_minZ.dot(point) + d_minZ > EPSILON)
+    return false; // P 在 MinZ 外侧
+  if (n_maxZ.dot(point) + d_maxZ > EPSILON)
+    return false; // P 在 MaxZ 外侧
+
+  return true; // 如果点在所有六个平面的内侧，则在六面体内部
 }
 
 void DistanceField::readPrime(string primefile) {
@@ -1007,10 +1125,6 @@ void DistanceField::SweepProjection_Regist() {
           SelfEnergy *= (DirSize - 2);
           SweepEnergy[dirs][x][y][z] =
               Alpha * SelfEnergy + (1 - Alpha) * OtherEnergy;
-          if (abs(this->Field[x][y][z]) < patch)
-            SweepEnergy[dirs][x][y][z] -= 2e-2;
-          if (this->Field[x][y][z] < 0)
-            SweepEnergy[dirs][x][y][z] = 1e-2;
         }
       }
     }

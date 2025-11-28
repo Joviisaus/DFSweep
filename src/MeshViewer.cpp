@@ -1,5 +1,6 @@
 #include "MeshViewer.h"
 #include "Mesh/iterators.h"
+#include "polyscope/slice_plane.h"
 #include "polyscope/types.h"
 
 int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
@@ -17,6 +18,8 @@ int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
     point[1] = v->point()[1];
     point[2] = v->point()[2];
     this->vertices.push_back(point);
+    Eigen::Vector3f vc = Eigen::Vector3f(v->rgb()[0], v->rgb()[1], v->rgb()[2]);
+    this->VertColors.push_back(vc);
   }
 
   for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); mfiter++) {
@@ -40,9 +43,11 @@ void MeshViewer::setGrid(
     std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar,
     std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjEnergy,
     std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists,
+    std::vector<Eigen::Vector3f> SweepDir,
     std::vector<std::vector<std::vector<float>>> GradianceDiff,
     std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord) {
   this->CuttingHexLists = CuttingHexLists;
+  this->SweepDir = SweepDir;
   this->bound_low = {Coord.front().front().front()[0],
                      Coord.front().front().front()[1],
                      Coord.front().front().front()[2]};
@@ -88,7 +93,8 @@ void MeshViewer::setGrid(
 
 int MeshViewer::show() {
   polyscope::init();
-  polyscope::registerSurfaceMesh("Mesh", vertices, faces);
+  auto mesh = polyscope::registerSurfaceMesh("Mesh", vertices, faces);
+  mesh->addVertexColorQuantity("Sweep Dir", this->VertColors);
   polyscope::VolumeGrid *psGrid = polyscope::registerVolumeGrid(
       "Field", {dimX, dimY, dimZ}, bound_low, bound_high);
   uint32_t nData = dimX * dimY * dimZ;
@@ -169,13 +175,16 @@ int MeshViewer::show() {
     };
     // 3. 注册为曲线网络
     std::string name = "Cutting Hex " + std::to_string(hex_id);
-    polyscope::registerCurveNetwork(name, hex_vertices, hex_edges)
-        ->setColor({0.8f, 0.1f, 0.1f}) // 设置颜色，例如红色
-        ->setRadius(0.005);            // 设置线的粗细
 
+    auto cn = polyscope::registerCurveNetwork(name, hex_vertices, hex_edges)
+                  ->setColor(glm::vec3{abs(this->SweepDir[hex_id][0]),
+                                       abs(this->SweepDir[hex_id][1]),
+                                       abs(this->SweepDir[hex_id][2])});
+    cn->setEnabled(false);
     hex_id++;
   }
   polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
+
   polyscope::view::upDir = polyscope::UpDir::NegZUp;
   polyscope::show();
   return 0;

@@ -19,6 +19,7 @@ public:
       std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar,
       std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjEnergy,
       std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists,
+      std::vector<Eigen::Vector3f> SweepDir,
       std::vector<std::vector<std::vector<float>>> GradianceDiff,
       std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord);
 
@@ -26,6 +27,7 @@ protected:
   MeshLib::CTMesh *mesh;
   glm::vec3 bound_low{};
   glm::vec3 bound_high{};
+  std::vector<Eigen::Vector3f> SweepDir;
   uint32_t dimX;
   uint32_t dimY;
   uint32_t dimZ;
@@ -36,6 +38,7 @@ protected:
   std::vector<float *> SweepProjEnergies;
   std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists;
   std::vector<std::vector<float>> vertices;
+  std::vector<Eigen::Vector3f> VertColors;
   std::vector<std::vector<int>> faces;
 };
 
