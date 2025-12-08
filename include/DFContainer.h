@@ -88,6 +88,7 @@ protected:
                                          const Eigen::Vector3f &v0,
                                          const Eigen::Vector3f &v1,
                                          const Eigen::Vector3f &v2);
+  void DFS(MeshLib::CToolVertex *vert, int label);
 
   bool insideCuttingBox(Eigen::Vector3f point,
                         const std::map<int, Eigen::Vector3f> &verticesMap);

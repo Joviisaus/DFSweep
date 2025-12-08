@@ -796,8 +796,24 @@ void DistanceField::ComputeDistanceField() {
   }
 }
 
+void DistanceField::DFS(MeshLib::CToolVertex *vert, int label) {
+  if (vert->label() == label)
+    vert->marked() = true;
+  else
+    return;
+  for (MeshLib::CTMesh::VertexVertexIterator vviter(vert); !vviter.end();
+       vviter++) {
+    MeshLib::CToolVertex *vertex =
+        static_cast<MeshLib::CToolVertex *>(vviter.value());
+    if (vertex->label() == label && vertex->marked() == false) {
+      DFS(vertex, label);
+    }
+  }
+}
+
 /**
- * @brief Checks if a point is inside the hexahedron defined by its 8 vertices.
+ * @brief Checks if a point is inside the hexahedron defined by its 8
+ * vertices.
  * * Uses Point-to-Plane test with corrected external normal vectors.
  */
 bool DistanceField::insideCuttingBox(
@@ -809,50 +825,26 @@ bool DistanceField::insideCuttingBox(
     return false;
   }
 
-  // 1. 获取关键顶点 (Min/Max 组合)
-  // V0: (Min, Min, Min)
-  // V1: (Min, Min, Max)
-  // V2: (Min, Max, Min)
-  // V3: (Min, Max, Max)
-  // V4: (Max, Min, Min)
-  // V5: (Max, Min, Max)
-  // V6: (Max, Max, Min)
-  // V7: (Max, Max, Max)
-
-  // 使用 .at() 确保键存在
   const Eigen::Vector3f &v0 = verticesMap.at(0);
   const Eigen::Vector3f &v1 = verticesMap.at(1);
   const Eigen::Vector3f &v2 = verticesMap.at(2);
   const Eigen::Vector3f &v4 = verticesMap.at(4);
 
-  // 2. 推导三个基本方向的向量 (这些向量不需要归一化)
   Eigen::Vector3f dirX_vec = v4 - v0;
   Eigen::Vector3f dirY_vec = v2 - v0;
   Eigen::Vector3f dirZ_vec = v1 - v0;
 
-  // 3. 计算三个轴的法向量 nX, nY, nZ
   const float EPSILON = 1e-6f;
 
-  // a. X-Planes 法向量 nX (垂直于 dirY 和 dirZ)
   Eigen::Vector3f nX = dirY_vec.cross(dirZ_vec).normalized();
-  // b. Y-Planes 法向量 nY (垂直于 dirX 和 dirZ)
   Eigen::Vector3f nY = dirX_vec.cross(dirZ_vec).normalized();
-  // c. Z-Planes 法向量 nZ (垂直于 dirX 和 dirY)
   Eigen::Vector3f nZ = dirX_vec.cross(dirY_vec).normalized();
 
-  // 4. 定义六个平面并进行点测试 (平面方程: n_ext . P + d = 0)
-  // 要求：n_ext 指向盒外。如果 n_ext . P + d > 0，则点在盒外。
-
-  // --- X 边界 ---
-
-  // 确定 nX 的指向性: nX 是否指向 MaxX 方向 (V4 - V0)
   bool nX_points_to_maxX = (nX.dot(dirX_vec) > 0);
 
-  // MinX 平面: 通过 V0。法向量 n_minX 应该指向 -dirX 方向
   Eigen::Vector3f n_minX = nX_points_to_maxX ? -nX : nX;
   float d_minX = -n_minX.dot(v0);
 
-  // MaxX 平面: 通过 V4。法向量 n_maxX 应该指向 +dirX 方向
   Eigen::Vector3f n_maxX = nX_points_to_maxX ? nX : -nX;
   float d_maxX = -n_maxX.dot(v4);
 
@@ -861,16 +853,11 @@ bool DistanceField::insideCuttingBox(
   if (n_maxX.dot(point) + d_maxX > EPSILON)
     return false; // P 在 MaxX 外侧
 
-  // --- Y 边界 ---
-
-  // 确定 nY 的指向性: nY 是否指向 MaxY 方向 (V2 - V0)
   bool nY_points_to_maxY = (nY.dot(dirY_vec) > 0);
 
-  // MinY 平面: 通过 V0。法向量 n_minY 应该指向 -dirY 方向
   Eigen::Vector3f n_minY = nY_points_to_maxY ? -nY : nY;
   float d_minY = -n_minY.dot(v0);
 
-  // MaxY 平面: 通过 V2。法向量 n_maxY 应该指向 +dirY 方向
   Eigen::Vector3f n_maxY = nY_points_to_maxY ? nY : -nY;
   float d_maxY = -n_maxY.dot(v2);
 
@@ -878,17 +865,11 @@ bool DistanceField::insideCuttingBox(
     return false; // P 在 MinY 外侧
   if (n_maxY.dot(point) + d_maxY > EPSILON)
     return false; // P 在 MaxY 外侧
-
-  // --- Z 边界 ---
-
-  // 确定 nZ 的指向性: nZ 是否指向 MaxZ 方向 (V1 - V0)
   bool nZ_points_to_maxZ = (nZ.dot(dirZ_vec) > 0);
 
-  // MinZ 平面: 通过 V0。法向量 n_minZ 应该指向 -dirZ 方向
   Eigen::Vector3f n_minZ = nZ_points_to_maxZ ? -nZ : nZ;
   float d_minZ = -n_minZ.dot(v0);
 
-  // MaxZ 平面: 通过 V1。法向量 n_maxZ 应该指向 +dirZ 方向
   Eigen::Vector3f n_maxZ = nZ_points_to_maxZ ? nZ : -nZ;
   float d_maxZ = -n_maxZ.dot(v1);
 
@@ -997,14 +978,53 @@ void DistanceField::readPrime(string primefile) {
     v->normal()[1] = Percise_normal[1];
     v->normal()[2] = Percise_normal[2];
   }
+  int maxPrimeid = 0;
+
+  for (int i = 0; i < this->primes.size(); i++) {
+    if (this->primes[i].id > maxPrimeid)
+      maxPrimeid = primes[i].id;
+  }
+
+  for (int i = 0; i < this->primes.size(); i++) {
+    MeshLib::CToolVertex *startvertex = NULL;
+    for (MeshLib::MeshVertexIterator mviter(this->mesh); !mviter.end();
+         ++mviter) {
+      MeshLib::CToolVertex *v =
+          static_cast<MeshLib::CToolVertex *>(mviter.value());
+      if (startvertex == NULL && v->label() == primes[i].id)
+        startvertex = v;
+      v->marked() = false;
+    }
+    if (startvertex == NULL)
+      continue;
+
+    DFS(startvertex, primes[i].id);
+    bool hasPoped = false;
+    for (MeshLib::MeshVertexIterator mviter(this->mesh); !mviter.end();
+         ++mviter) {
+      MeshLib::CToolVertex *v =
+          static_cast<MeshLib::CToolVertex *>(mviter.value());
+      if (v->label() == this->primes[i].id && v->marked() == false) {
+        v->label() = maxPrimeid + 1;
+        hasPoped = true;
+      }
+    }
+    if (hasPoped) {
+      PrimeData newprime = this->primes[i];
+      newprime.id = maxPrimeid + 1;
+      maxPrimeid++;
+      this->primes.push_back(newprime);
+    }
+  }
 
   for (int i = 0; i < this->primes.size(); i++) {
     auto &m_params = this->primes[i].params;
 
-    std::cout << "Params: " << m_params[0] << " " << m_params[1] << " "
-              << m_params[2] << " " << m_params[3] << " " << m_params[4] << " "
-              << m_params[5] << " " << m_params[6] << " " << m_params[7] << " "
-              << m_params[8] << " " << m_params[9] << std::endl;
+    std::cout << "ID: " << this->primes[i].id << " Params: " << m_params[0]
+              << " " << m_params[1] << " " << m_params[2] << " " << m_params[3]
+              << " " << m_params[4] << " " << m_params[5] << " " << m_params[6]
+              << " " << m_params[7] << " " << m_params[8] << " " << m_params[9]
+              << std::endl;
   }
 }
 void DistanceField::SaveFieldToBinary(const std::string &filename) {
@@ -1112,10 +1132,15 @@ void DistanceField::SweepProjection_Regist() {
       for (int y = 0; y < this->SweepProjEnergy[dirs][x].size(); y++) {
         for (int z = 0; z < this->SweepProjEnergy[dirs][x][y].size(); z++) {
           if (this->FieldLabel[x][y][z] == -1 && this->Field[x][y][z] > 0) {
-            SweepEnergy[dirs][x][y][z] = -1e-2;
+            SweepEnergy[dirs][x][y][z] = -2e-1;
             continue;
           }
-          float OtherEnergy = 0;
+          if (this->primes[this->FieldLabel[x][y][z]].isPlane &&
+              abs(this->Field[x][y][z]) < 2 * patch) {
+            SweepEnergy[dirs][x][y][z] = -2e-1;
+            continue;
+          }
+          float OtherEnergy = -4e-1;
           for (int RestDirs = 0; RestDirs < this->SweepProjEnergy.size();
                RestDirs++) {
             if (RestDirs != dirs)
@@ -1132,7 +1157,7 @@ void DistanceField::SweepProjection_Regist() {
   this->SweepProjEnergy = SweepEnergy;
 
   for (int i = 0; i < this->SweepDir.size(); i++) {
-    CuttingBox cb(SweepDir, SweepProjEnergy, Coord, this->FieldLabel,
+    CuttingBox cb(SweepDir, &SweepProjEnergy, Coord, this->FieldLabel,
                   this->Field, i);
     this->CuttingHexLists.push_back(cb.GetBoxVertices());
   }

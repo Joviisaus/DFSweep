@@ -6,13 +6,13 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <float.h>
 inline float STEP_SIZE = 0.05f;       // 每一步微调的量
-const int MAX_ITERATIONS = 50;        // 最大迭代次数
+const int MAX_ITERATIONS = 100;       // 最大迭代次数
 const float ENERGY_TOLERANCE = 1e-4f; // 能量变化小于此值则停止
 
 class CuttingBox {
 public:
   CuttingBox(std::vector<Eigen::Vector3f> SweepDir,
-             std::vector<std::vector<std::vector<std::vector<float>>>> Energy,
+             std::vector<std::vector<std::vector<std::vector<float>>>> *Energy,
              std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord,
              std::vector<std::vector<std::vector<int>>> FieldLabel,
              std::vector<std::vector<std::vector<float>>> Field, int id);
@@ -21,7 +21,7 @@ public:
 protected:
   int id;
   std::vector<Eigen::Vector3f> SweepDir;
-  std::vector<std::vector<std::vector<std::vector<float>>>> Energy;
+  std::vector<std::vector<std::vector<std::vector<float>>>> *Energy;
   std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord;
   std::vector<std::vector<std::vector<int>>> FieldLabel;
   std::vector<std::vector<std::vector<float>>> Field;
@@ -38,6 +38,7 @@ protected:
   void DirCompute();
   void TunePosition();
   void PositionInit();
+  void EnergyUpdate();
   float ComputeTotalEnergy();
   Eigen::Vector3f SolveVertex(float boundX, float boundY, float boundZ);
 };

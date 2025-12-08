@@ -20,8 +20,8 @@ using namespace std;
 namespace MeshLib {
 class CToolVertex : public CVertex {
 public:
-  CToolVertex() {};
-  ~CToolVertex() {};
+  CToolVertex(){};
+  ~CToolVertex(){};
   void _to_string();
   void _from_string();
 
@@ -29,12 +29,14 @@ public:
   CPoint &normal() { return m_normal; };
   int &label() { return m_label; };
   bool &FeaturePoint() { return m_FeaturePoint; };
+  bool &marked() { return m_marked; };
 
 protected:
   CPoint m_rgb;
   CPoint m_normal;
   int m_label;
   bool m_FeaturePoint;
+  bool m_marked;
 };
 
 inline void CToolVertex::_from_string() {
@@ -93,8 +95,8 @@ inline void CToolVertex::_to_string() {
 
 class CToolEdge : public CEdge {
 public:
-  CToolEdge() {};
-  ~CToolEdge() {};
+  CToolEdge(){};
+  ~CToolEdge(){};
   void _to_string();
   void _from_string();
   bool &sharp() { return this->m_sharp; };
@@ -136,8 +138,8 @@ inline void CToolEdge::_from_string() {
 
 class CToolFace : public CFace {
 public:
-  CToolFace() {};
-  ~CToolFace() {};
+  CToolFace(){};
+  ~CToolFace(){};
   void _to_string();
   void _from_string();
   bool &visited() { return m_visited; };
@@ -187,8 +189,8 @@ inline void CToolFace::_to_string() {
 
 class CToolHalfEdge : public CHalfEdge {
 public:
-  CToolHalfEdge() {};
-  ~CToolHalfEdge() {};
+  CToolHalfEdge(){};
+  ~CToolHalfEdge(){};
   double &angle() { return m_angle; };
   void _to_string();
 
