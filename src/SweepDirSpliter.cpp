@@ -20,7 +20,7 @@ SweepDirSpliter::SweepDirSpliter(
   this->LabelTopo.resize(LabelList.size(), LabelList.size());
   this->LabelTopo.setZero();
 
-  // this->LabelTopoGen();
+  this->LabelTopoGen();
   this->SweepDirSplit();
 }
 

@@ -35,10 +35,18 @@ protected:
   float MaxY;
   float MaxZ;
 
+  float DownBoundX;
+  float UpperBoundX;
+  float DownBoundY;
+  float UpperBoundY;
+  float DownBoundZ;
+  float UpperBoundZ;
+
   void DirCompute();
   void TunePosition();
   void PositionInit();
   void EnergyUpdate();
+  bool ValidBox();
   float ComputeTotalEnergy();
   Eigen::Vector3f SolveVertex(float boundX, float boundY, float boundZ);
 };

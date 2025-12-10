@@ -158,13 +158,13 @@ void CuttingBox::TunePosition() {
 
         bool valid_move = true;
         if (i == 0 || i == 1) { // MinX, MaxX
-          if (this->MinX >= this->MaxX)
+          if (this->MinX >= this->MaxX || !ValidBox())
             valid_move = false;
         } else if (i == 2 || i == 3) { // MinY, MaxY
-          if (this->MinY >= this->MaxY)
+          if (this->MinY >= this->MaxY || !ValidBox())
             valid_move = false;
         } else if (i == 4 || i == 5) { // MinZ, MaxZ
-          if (this->MinZ >= this->MaxZ)
+          if (this->MinZ >= this->MaxZ || !ValidBox())
             valid_move = false;
         }
 
@@ -198,7 +198,8 @@ void CuttingBox::TunePosition() {
       break;
     }
   }
-  std::cout << " Tuned Energy: " << current_energy << std::endl;
+  std::cout << " Tuned Energy: " << current_energy
+            << " After iteration: " << iteration << std::endl;
 }
 
 float CuttingBox::ComputeTotalEnergy() {
@@ -261,7 +262,7 @@ void CuttingBox::EnergyUpdate() {
           for (int i = 0; i < this->SweepDir.size(); i++) {
             if ((this->SweepDir[i].cross(this->SweepDir[this->id])).norm() >
                 1e-6)
-              this->Energy[0][i][x][y][z] = 999999.0f;
+              this->Energy[0][i][x][y][z] = 100;
           }
         }
       }
@@ -269,14 +270,21 @@ void CuttingBox::EnergyUpdate() {
   }
 }
 void CuttingBox::PositionInit() {
-  this->MinX = 99999;
-  this->MinY = 99999;
-  this->MinZ = 99999;
-  this->MaxX = -99999;
-  this->MaxY = -99999;
-  this->MaxZ = -99999;
+  this->MinX = std::numeric_limits<float>::max();
+  this->MinY = std::numeric_limits<float>::max();
+  this->MinZ = std::numeric_limits<float>::max();
+  this->MaxX = std::numeric_limits<float>::lowest();
+  this->MaxY = std::numeric_limits<float>::lowest();
+  this->MaxZ = std::numeric_limits<float>::lowest();
+
+  this->UpperBoundX = std::numeric_limits<float>::lowest();
+  this->UpperBoundY = std::numeric_limits<float>::lowest();
+  this->UpperBoundZ = std::numeric_limits<float>::lowest();
+  this->DownBoundX = std::numeric_limits<float>::max();
+  this->DownBoundY = std::numeric_limits<float>::max();
+  this->DownBoundZ = std::numeric_limits<float>::max();
   int MinEnergyLabel = -1;
-  float MinEnergy = FLT_MAX;
+  float MinEnergy = std::numeric_limits<float>::max();
 #ifdef ENABLE_OMP
 #pragma omp parallel for collapse(3)
 #endif
@@ -297,8 +305,28 @@ void CuttingBox::PositionInit() {
   for (int x = 0; x < this->Energy[0][id].size(); x++) {
     for (int y = 0; y < this->Energy[0][id][0].size(); y++) {
       for (int z = 0; z < this->Energy[0][id][0][0].size(); z++) {
-        // if (this->Energy[0][id][x][y][z] > -1e-1)
-        //   continue;
+        if (x == 0 || y == 0 || z == 0 || x == this->Energy[0][id].size() - 1 ||
+            y == this->Energy[0][id][0].size() - 1 ||
+            z == this->Energy[0][id][0][0].size() - 1) {
+          float dx = this->Coord[x][y][z].dot(dirx);
+          float dy = this->Coord[x][y][z].dot(diry);
+          float dz = this->Coord[x][y][z].dot(dirz);
+          if (dx < this->DownBoundX)
+            this->DownBoundX = dx;
+          if (dx > this->UpperBoundX) {
+            this->UpperBoundX = dx;
+          }
+          if (dy < this->DownBoundY)
+            this->DownBoundY = dy;
+          if (dy > this->UpperBoundY)
+            this->UpperBoundY = dy;
+          if (dz < this->DownBoundZ)
+            this->DownBoundZ = dz;
+          if (dz > this->UpperBoundZ)
+            this->UpperBoundZ = dz;
+        }
+        if (this->Energy[0][id][x][y][z] > -1e-1)
+          continue;
         if (this->FieldLabel[x][y][z] != MinEnergyLabel ||
             this->Field[x][y][z] < 0)
           continue;
@@ -387,4 +415,37 @@ Eigen::Vector3f CuttingBox::SolveVertex(float boundX, float boundY,
   Eigen::Vector3f V = A.colPivHouseholderQr().solve(B);
 
   return V;
+}
+
+bool CuttingBox::ValidBox() {
+  if (this->Coord.empty() || this->Coord[0].empty() ||
+      this->Coord[0][0].empty()) {
+    return false;
+  }
+
+  const int x_max = this->Coord.size() - 1;
+  const int y_max = this->Coord[0].size() - 1;
+  const int z_max = this->Coord[0][0].size() - 1;
+
+  const Eigen::Vector3f lower_bound_P = this->Coord[0][0][0];
+
+  const Eigen::Vector3f upper_bound_P = this->Coord[x_max][y_max][z_max];
+
+  std::map<int, Eigen::Vector3f> points = this->GetBoxVertices();
+
+  for (int i = 0; i < 8; i++) {
+    const Eigen::Vector3f &p = points[i];
+
+    if (p[0] > upper_bound_P[0] || p[1] > upper_bound_P[1] ||
+        p[2] > upper_bound_P[2]) {
+      return false;
+    }
+
+    if (p[0] < lower_bound_P[0] || p[1] < lower_bound_P[1] ||
+        p[2] < lower_bound_P[2]) {
+      return false;
+    }
+  }
+
+  return true;
 }

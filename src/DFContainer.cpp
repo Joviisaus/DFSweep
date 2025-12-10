@@ -1126,21 +1126,21 @@ void DistanceField::SweepProjection_Regist() {
   int DirSize = this->SweepDir.size();
   auto SweepEnergy = this->SweepProjEnergy;
   float patch = (this->Coord[0][0][0] - this->Coord[0][0][1]).norm();
-
+  STEP_SIZE = 5 * patch;
   for (int dirs = 0; dirs < this->SweepProjEnergy.size(); dirs++) {
     for (int x = 0; x < this->SweepProjEnergy[dirs].size(); x++) {
       for (int y = 0; y < this->SweepProjEnergy[dirs][x].size(); y++) {
         for (int z = 0; z < this->SweepProjEnergy[dirs][x][y].size(); z++) {
           if (this->FieldLabel[x][y][z] == -1 && this->Field[x][y][z] > 0) {
-            SweepEnergy[dirs][x][y][z] = -2e-1;
+            SweepEnergy[dirs][x][y][z] = -2e-2;
             continue;
           }
           if (this->primes[this->FieldLabel[x][y][z]].isPlane &&
               abs(this->Field[x][y][z]) < 2 * patch) {
-            SweepEnergy[dirs][x][y][z] = -2e-1;
+            SweepEnergy[dirs][x][y][z] = -2e-2;
             continue;
           }
-          float OtherEnergy = -4e-1;
+          float OtherEnergy = -2e-2;
           for (int RestDirs = 0; RestDirs < this->SweepProjEnergy.size();
                RestDirs++) {
             if (RestDirs != dirs)
