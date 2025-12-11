@@ -10,7 +10,7 @@ inline float RotateZero = 0.1;
 
 class SweepDirFilter {
 public:
-  SweepDirFilter::SweepDirFilter(
+  SweepDirFilter(
       std::vector<Eigen::Vector3f> *SweepDir,
       std::vector<std::vector<std::vector<std::vector<float>>>>
           *SweepProjScalar,
