@@ -127,6 +127,8 @@ void CuttingBox::DirCompute() {
 }
 
 void CuttingBox::TunePosition() {
+  // TODO:
+  // Update box tune stratagy to enlarge the cutting box
 
   float *bounds[] = {&this->MinX, &this->MaxX, &this->MinY,
                      &this->MaxY, &this->MinZ, &this->MaxZ};
