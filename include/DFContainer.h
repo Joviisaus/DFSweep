@@ -37,6 +37,7 @@ public:
   std::vector<std::vector<std::vector<int>>> getGradianceCount() {
     return this->GradianceCount;
   };
+  std::vector<std::vector<std::vector<bool>>> ForbiddenBoundaryPoints;
   std::vector<std::vector<std::vector<float>>> getGradianceDiff() {
     return this->GradianceDiff;
   }

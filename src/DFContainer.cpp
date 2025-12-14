@@ -1126,7 +1126,7 @@ void DistanceField::SweepProjection_Regist() {
   int DirSize = this->SweepDir.size();
   auto SweepEnergy = this->SweepProjEnergy;
   float patch = (this->Coord[0][0][0] - this->Coord[0][0][1]).norm();
-  STEP_SIZE = 5 * patch;
+  STEP_SIZE = patch;
   for (int dirs = 0; dirs < this->SweepProjEnergy.size(); dirs++) {
     for (int x = 0; x < this->SweepProjEnergy[dirs].size(); x++) {
       for (int y = 0; y < this->SweepProjEnergy[dirs][x].size(); y++) {
@@ -1135,15 +1135,15 @@ void DistanceField::SweepProjection_Regist() {
           // Update Energy Field so that all the model can be contained in the
           // box lists if it can be sweep decomposed;
           if (this->FieldLabel[x][y][z] == -1 && this->Field[x][y][z] > 0) {
-            SweepEnergy[dirs][x][y][z] = -2e-2;
+            SweepEnergy[dirs][x][y][z] = -2e-4;
             continue;
           }
           if (this->primes[this->FieldLabel[x][y][z]].isPlane &&
               abs(this->Field[x][y][z]) < 2 * patch) {
-            SweepEnergy[dirs][x][y][z] = -2e-2;
+            SweepEnergy[dirs][x][y][z] = -2e-3;
             continue;
           }
-          float OtherEnergy = -2e-2;
+          float OtherEnergy = -2e-3;
           for (int RestDirs = 0; RestDirs < this->SweepProjEnergy.size();
                RestDirs++) {
             if (RestDirs != dirs)
@@ -1161,6 +1161,7 @@ void DistanceField::SweepProjection_Regist() {
   for (int i = 0; i < this->SweepDir.size(); i++) {
     CuttingBox cb(SweepDir, &SweepProjEnergy, Coord, this->FieldLabel,
                   this->Field, this->primes, i);
+    this->ForbiddenBoundaryPoints = cb.GetForbiddenBoundaryPoints();
     this->CuttingHexLists.push_back(cb.GetBoxVertices());
   }
 }

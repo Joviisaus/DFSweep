@@ -20,6 +20,7 @@ public:
       std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjEnergy,
       std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists,
       std::vector<Eigen::Vector3f> SweepDir,
+      std::vector<std::vector<std::vector<bool>>> ForbiddenBoundaryPoints,
       std::vector<std::vector<std::vector<float>>> GradianceDiff,
       std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord);
 
@@ -33,6 +34,7 @@ protected:
   uint32_t dimZ;
   float *scalarVals;
   float *GradianceDiff;
+  float *ForbiddenBoundaryPoints;
   int *GradianceScalar;
   std::vector<float *> SweepProjScalars;
   std::vector<float *> SweepProjEnergies;

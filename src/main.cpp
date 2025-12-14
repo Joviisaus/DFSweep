@@ -66,8 +66,8 @@ int main(int argc, char **argv) {
   viewer.setGrid(DistanceField.getField(), DistanceField.getGradianceCount(),
                  DistanceField.GetSweepProjScalar(),
                  DistanceField.GetSweepProjEnergy(),
-                 DistanceField.getCuttingHex(),
-                 DistanceField.getSweepDir(),
+                 DistanceField.getCuttingHex(), DistanceField.getSweepDir(),
+                 DistanceField.ForbiddenBoundaryPoints,
                  DistanceField.getGradianceDiff(), DistanceField.getCoord());
   viewer.setMesh(&mesh);
   std::cout << "Grid and Mesh Settled" << std::endl;

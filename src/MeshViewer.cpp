@@ -44,6 +44,7 @@ void MeshViewer::setGrid(
     std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjEnergy,
     std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists,
     std::vector<Eigen::Vector3f> SweepDir,
+    std::vector<std::vector<std::vector<bool>>> ForbiddenBoundaryPoints,
     std::vector<std::vector<std::vector<float>>> GradianceDiff,
     std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord) {
   this->CuttingHexLists = CuttingHexLists;
@@ -64,6 +65,7 @@ void MeshViewer::setGrid(
   size_t totalSize = this->dimX * this->dimY * this->dimZ;
   this->scalarVals = new float[totalSize];
   this->GradianceScalar = new int[totalSize];
+  this->ForbiddenBoundaryPoints = new float[totalSize];
   this->GradianceDiff = new float[totalSize];
   for (int i = 0; i < SweepProjScalars.size(); i++) {
     SweepProjScalars[i] = new float[totalSize];
@@ -76,6 +78,8 @@ void MeshViewer::setGrid(
     for (size_t y = 0; y < this->dimY; ++y) {
       for (size_t x = 0; x < this->dimX; ++x) {
         this->scalarVals[index] = Field[x][y][z];
+        this->ForbiddenBoundaryPoints[index] =
+            ForbiddenBoundaryPoints[x][y][z] ? 1.0f : 0.0f;
         this->GradianceScalar[index] = GradianceCount[x][y][z];
         this->GradianceDiff[index] = GradianceDiff[x][y][z];
         for (int i = 0; i < SweepProjScalars.size(); i++) {
@@ -105,6 +109,8 @@ int MeshViewer::show() {
                                 std::make_tuple(GradianceScalar, nData));
   psGrid->addNodeScalarQuantity("Gradiance Diff",
                                 std::make_tuple(GradianceDiff, nData));
+  psGrid->addNodeScalarQuantity(
+      "Valid Points", std::make_tuple(ForbiddenBoundaryPoints, nData));
   for (int i = 0; i < SweepProjScalars.size(); i++) {
     std::string str = "Accept for Sweep Direction " + std::to_string(i);
     psGrid->addNodeScalarQuantity(str,
@@ -124,7 +130,6 @@ int MeshViewer::show() {
 
   int hex_id = 0;
   for (const auto &hex_map : CuttingHexLists) {
-
     // 1. 准备顶点坐标
     // 转换为 polyscope 期望的 std::vector<glm::vec3> 格式
     std::vector<glm::vec3> hex_vertices;
