@@ -63,7 +63,7 @@ int SweepDirFilter::Filting() {
         if (this->SweepProjScalar[0][MinDirID][x][y][z] < RotateZero) {
           RestField[x][y][z] = 0;
         }
-        if (this->FieldLabel[x][y][z] == -1)
+        if (this->FieldLabel[x][y][z] < 0)
           RestField[x][y][z] = 0;
         if (RestField[x][y][z] == 1)
           RestSize++;

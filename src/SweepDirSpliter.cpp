@@ -190,7 +190,7 @@ void SweepDirSpliter::SweepMask(std::vector<std::vector<int>> &EnergyLabel) {
 
 #ifdef ENABLE_OMP
 
-#pragma omp parallel for collapse(2)
+#pragma omp parallel for collapse(3)
   for (int x = 0; x < dimX; x++) {
     for (int y = 0; y < dimY; y++) {
       for (int z = 0; z < dimZ; z++) {

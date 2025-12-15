@@ -738,7 +738,7 @@ void DistanceField::ComputeDistanceField() {
           MaxGradianceDiff = 0;
         this->GradianceDiff[i][j][k] = MaxGradianceDiff;
         int currentLabel = this->FieldLabel[i][j][k];
-        if (currentLabel == -1) {
+        if (currentLabel < 0) {
           GradianceCount[i][j][k] = 0;
         }
         bool hasDifferent = false;
@@ -1131,10 +1131,7 @@ void DistanceField::SweepProjection_Regist() {
     for (int x = 0; x < this->SweepProjEnergy[dirs].size(); x++) {
       for (int y = 0; y < this->SweepProjEnergy[dirs][x].size(); y++) {
         for (int z = 0; z < this->SweepProjEnergy[dirs][x][y].size(); z++) {
-          // TODO:
-          // Update Energy Field so that all the model can be contained in the
-          // box lists if it can be sweep decomposed;
-          if (this->FieldLabel[x][y][z] == -1 && this->Field[x][y][z] > 0) {
+          if (this->FieldLabel[x][y][z] < 0 && this->Field[x][y][z] > 0) {
             SweepEnergy[dirs][x][y][z] = -2e-4;
             continue;
           }

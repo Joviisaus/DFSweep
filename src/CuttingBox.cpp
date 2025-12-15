@@ -32,13 +32,13 @@ void CuttingBox::PrecomputeForbiddenPoints() {
 
   const float FIELD_THRESHOLD = STEP_SIZE;
 
-  // #ifdef ENABLE_OMP
-  // #pragma omp parallel for collapse(3)
-  // #endif
+#ifdef ENABLE_OMP
+#pragma omp parallel for collapse(3)
+#endif
   for (int x = 0; x < D1; ++x) {
     for (int y = 0; y < D2; ++y) {
       for (int z = 0; z < D3; ++z) {
-        if (this->FieldLabel[x][y][z] == -1)
+        if (this->FieldLabel[x][y][z] < -1)
           continue;
         if (!(this->primes[this->FieldLabel[x][y][z]].isPlane) &&
             std::abs(this->Field[x][y][z]) < FIELD_THRESHOLD) {
@@ -51,65 +51,41 @@ void CuttingBox::PrecomputeForbiddenPoints() {
 bool CuttingBox::CheckForbiddenPointsInNewRegion(int bound_index,
                                                  float original_value,
                                                  float new_value) {
-  // 1. 容忍度
   const float PROJECTION_TOLERANCE = STEP_SIZE * 1e-2f;
-
-  // 2. 确定检查的轴（投影方向）
   const Eigen::Vector3f *dir;
   int axis = bound_index / 2; // 0=X, 1=Y, 2=Z
-
   if (axis == 0)
     dir = &this->dirx;
   else if (axis == 1)
     dir = &this->diry;
   else
     dir = &this->dirz;
-
-  // 3. 遍历所有可能的禁止点
   int D1 = this->ForbiddenBoundaryPoints.size();
   int D2 = this->ForbiddenBoundaryPoints[0].size();
   int D3 = this->ForbiddenBoundaryPoints[0][0].size();
-
-  // 在这里，this->MinX/MaxX/MinY/MaxY/MinZ/MaxZ 已经包含 new_value。
-
+  bool ValidGrow = false;
   for (int x = 0; x < D1; ++x) {
     for (int y = 0; y < D2; ++y) {
       for (int z = 0; z < D3; ++z) {
         if (this->ForbiddenBoundaryPoints[x][y][z]) {
           const Eigen::Vector3f &P = this->Coord[x][y][z];
           float projection = P.dot(*dir);
-
-          // --- 第一层检查：点 P 是否位于新的边界平面附近？ ---
           if (std::abs(projection - new_value) < PROJECTION_TOLERANCE) {
-
-            // --- 第二层检查：点 P 是否位于新的箱体边界上？ ---
-            // 我们需要检查 P 的其他两个轴的投影是否在箱体的 Min/Max 之间。
-
             bool is_on_new_boundary = false;
-
-            // 假设 dirx, diry, dirz 是相互正交的单位向量
             float py = P.dot(this->diry);
             float pz = P.dot(this->dirz);
-
-            // 由于 X 边界正在移动，我们只检查 Y 和 Z 边界
             if (axis == 0) { // 移动 X 边界
               float p_y = P.dot(this->diry);
               float p_z = P.dot(this->dirz);
-
-              // 检查点 P 的 Y 和 Z 投影是否在当前箱体的 YZ 范围内
               if (p_y >= this->MinY - PROJECTION_TOLERANCE &&
                   p_y <= this->MaxY + PROJECTION_TOLERANCE &&
                   p_z >= this->MinZ - PROJECTION_TOLERANCE &&
                   p_z <= this->MaxZ + PROJECTION_TOLERANCE) {
                 is_on_new_boundary = true;
               }
-            }
-            // 其他轴的检查（如果移动 Y 边界，则检查 XZ；如果移动 Z 边界，则检查
-            // XY）
-            else if (axis == 1) { // 移动 Y 边界
+            } else if (axis == 1) { // 移动 Y 边界
               float p_x = P.dot(this->dirx);
               float p_z = P.dot(this->dirz);
-
               if (p_x >= this->MinX - PROJECTION_TOLERANCE &&
                   p_x <= this->MaxX + PROJECTION_TOLERANCE &&
                   p_z >= this->MinZ - PROJECTION_TOLERANCE &&
@@ -119,7 +95,6 @@ bool CuttingBox::CheckForbiddenPointsInNewRegion(int bound_index,
             } else if (axis == 2) { // 移动 Z 边界
               float p_x = P.dot(this->dirx);
               float p_y = P.dot(this->diry);
-
               if (p_x >= this->MinX - PROJECTION_TOLERANCE &&
                   p_x <= this->MaxX + PROJECTION_TOLERANCE &&
                   p_y >= this->MinY - PROJECTION_TOLERANCE &&
@@ -127,11 +102,48 @@ bool CuttingBox::CheckForbiddenPointsInNewRegion(int bound_index,
                 is_on_new_boundary = true;
               }
             }
-
-            // --- 最终判定 ---
             if (is_on_new_boundary) {
-              // 禁止点 P 位于新边界平面附近，且位于该平面定义的箱体边界区域内
               return false;
+            }
+          }
+        }
+        if (!ValidGrow && this->Field[x][y][z] >= -4 * STEP_SIZE) {
+          const Eigen::Vector3f &P = this->Coord[x][y][z];
+          float projection = P.dot(*dir);
+          if (std::abs(projection - new_value) < PROJECTION_TOLERANCE) {
+            bool is_on_new_boundary = false;
+            float py = P.dot(this->diry);
+            float pz = P.dot(this->dirz);
+            if (axis == 0) { // 移动 X 边界
+              float p_y = P.dot(this->diry);
+              float p_z = P.dot(this->dirz);
+              if (p_y >= this->MinY - PROJECTION_TOLERANCE &&
+                  p_y <= this->MaxY + PROJECTION_TOLERANCE &&
+                  p_z >= this->MinZ - PROJECTION_TOLERANCE &&
+                  p_z <= this->MaxZ + PROJECTION_TOLERANCE) {
+                is_on_new_boundary = true;
+              }
+            } else if (axis == 1) { // 移动 Y 边界
+              float p_x = P.dot(this->dirx);
+              float p_z = P.dot(this->dirz);
+              if (p_x >= this->MinX - PROJECTION_TOLERANCE &&
+                  p_x <= this->MaxX + PROJECTION_TOLERANCE &&
+                  p_z >= this->MinZ - PROJECTION_TOLERANCE &&
+                  p_z <= this->MaxZ + PROJECTION_TOLERANCE) {
+                is_on_new_boundary = true;
+              }
+            } else if (axis == 2) { // 移动 Z 边界
+              float p_x = P.dot(this->dirx);
+              float p_y = P.dot(this->diry);
+              if (p_x >= this->MinX - PROJECTION_TOLERANCE &&
+                  p_x <= this->MaxX + PROJECTION_TOLERANCE &&
+                  p_y >= this->MinY - PROJECTION_TOLERANCE &&
+                  p_y <= this->MaxY + PROJECTION_TOLERANCE) {
+                is_on_new_boundary = true;
+              }
+            }
+            if (is_on_new_boundary) {
+              ValidGrow = true;
             }
           }
         }
@@ -139,7 +151,7 @@ bool CuttingBox::CheckForbiddenPointsInNewRegion(int bound_index,
     }
   }
 
-  return true; // 新的箱体边界区域内没有禁止点
+  return ValidGrow;
 }
 /**
  * @brief Computes MatchingEnergy for all sweep directions relative to the
@@ -266,27 +278,21 @@ void CuttingBox::TunePosition() {
          std::abs(previous_energy - current_energy) > ENERGY_TOLERANCE) {
 
     previous_energy = current_energy;
-    bool improvement_found = false; // 标记本轮迭代中是否找到了任何改进
+    bool improvement_found = false;
 
-    // --- 外部循环 (i: 边界参数 0-5) ---
     for (int i = 0; i < 6; ++i) {
       float *current_param = bounds[i];
 
       float moves[] = {-STEP_SIZE, STEP_SIZE, -3 * STEP_SIZE, 3 * STEP_SIZE};
-      bool accepted_move_for_i = false; // 标记当前参数 i 是否已找到并采纳改进
+      bool accepted_move_for_i = false;
 
-      // --- 内部循环 (move: 步长) ---
       for (float move : moves) {
 
-        // 1. 记录进行当前测试移动前的边界值
         float value_before_test = *current_param;
 
         float new_value = value_before_test + move;
-        *current_param = new_value; // 应用测试性改变
-
+        *current_param = new_value;
         bool valid_move = true;
-
-        // 2. 检查几何约束 (Min 必须 < Max)
         if (i == 0 || i == 1) {
           if (this->MinX >= this->MaxX)
             valid_move = false;
@@ -298,62 +304,36 @@ void CuttingBox::TunePosition() {
             valid_move = false;
         }
 
-        // 3. 检查全局边界约束 (ValidBox)
         if (valid_move && !ValidBox()) {
           valid_move = false;
-          // if (i == 2 || i == 3)
-          //   std::cout << "Y Valid Box is:" << ValidBox() << std::endl;
         }
 
-        // 4. 检查禁止点 (使用移动前的值进行比较)
         if (valid_move) {
           if (!CheckForbiddenPointsInNewRegion(i, value_before_test,
                                                new_value)) {
             valid_move = false;
           }
         }
-        //
-        // 5. 验收逻辑
         if (valid_move) {
           float new_energy = ComputeTotalEnergy();
 
-          // if (i == 2 || i == 3)
-          //   std::cout << "Y Energy: " << new_energy
-          //             << " than current_energy: " << current_energy
-          //             << " Energy Update: " << current_energy - new_energy
-          //             << std::endl;
-          // 如果能量下降，则采纳该移动
           if (new_energy < current_energy) {
-            // ACCEPTED: 保持 *current_param = new_value
-            current_energy = new_energy; // 永久更新总能量
+            current_energy = new_energy;
             improvement_found = true;
             accepted_move_for_i = true;
 
-            // (可选) 调试输出
-            // std::cout << "Iteration " << iteration << ": Applied change to
-            // "
-            //           << names[i] << " by " << move
-            //           << ". New Energy: " << current_energy << std::endl;
-
-            break; // <--- 关键修改：跳出 moves 循环，移至下一个参数 i+1
+            break;
           } else {
-            // REJECTED (无改进): 恢复到测试前的值
             *current_param = value_before_test;
           }
         } else {
-          // REJECTED (无效): 恢复到测试前的值
           *current_param = value_before_test;
         }
-      } // 结束 moves 循环
-
-      // 如果 accepted_move_for_i 为 true，说明已应用改进，for 循环会继续到 i+1
-      // 如果为 false，说明所有 moves 都无效或无改进，for 循环也会继续到 i+1
-    } // 结束 i 循环
+      }
+    }
 
     if (!improvement_found) {
-      // std::cout << "Iteration " << iteration << ": No improving move found."
-      //           << std::endl;
-      break; // 如果遍历完所有 move 都没有找到改进，则终止
+      break;
     }
 
     iteration++;
@@ -369,9 +349,9 @@ float CuttingBox::ComputeTotalEnergy() {
   int D2 = this->Energy[0][this->id][0].size();
   int D3 = this->Energy[0][this->id][0][0].size();
 
-  // #ifdef ENABLE_OMP
-  // #pragma omp parallel for collapse(3)
-  // #endif
+#ifdef ENABLE_OMP
+#pragma omp parallel for collapse(3) reduction(+ : total_energy)
+#endif
   for (int x = 0; x < D1; ++x) {
     for (int y = 0; y < D2; ++y) {
       for (int z = 0; z < D3; ++z) {
@@ -400,9 +380,9 @@ void CuttingBox::EnergyUpdate() {
   int D2 = this->Energy[0][this->id][0].size();
   int D3 = this->Energy[0][this->id][0][0].size();
 
-  // #ifdef ENABLE_OMP
-  // #pragma omp parallel for collapse(3)
-  // #endif
+#ifdef ENABLE_OMP
+#pragma omp parallel for collapse(3)
+#endif
   for (int x = 0; x < D1; ++x) {
     for (int y = 0; y < D2; ++y) {
       for (int z = 0; z < D3; ++z) {
@@ -444,9 +424,9 @@ void CuttingBox::PositionInit() {
   this->DownBoundZ = std::numeric_limits<float>::max();
   int MinEnergyLabel = -1;
   float MinEnergy = std::numeric_limits<float>::max();
-  // #ifdef ENABLE_OMP
-  // #pragma omp parallel for collapse(3)
-  // #endif
+#ifdef ENABLE_OMP
+#pragma omp parallel for collapse(3)
+#endif
   for (int x = 0; x < this->Energy[0][id].size(); x++) {
     for (int y = 0; y < this->Energy[0][id][0].size(); y++) {
       for (int z = 0; z < this->Energy[0][id][0][0].size(); z++) {
@@ -458,9 +438,9 @@ void CuttingBox::PositionInit() {
     }
   }
 
-  // #ifdef ENABLE_OMP
-  // #pragma omp parallel for collapse(3)
-  // #endif
+#ifdef ENABLE_OMP
+#pragma omp parallel for collapse(3)
+#endif
   for (int x = 0; x < this->Energy[0][id].size(); x++) {
     for (int y = 0; y < this->Energy[0][id][0].size(); y++) {
       for (int z = 0; z < this->Energy[0][id][0][0].size(); z++) {
