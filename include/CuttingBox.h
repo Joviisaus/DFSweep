@@ -53,6 +53,8 @@ protected:
 
   void DirCompute();
   void TunePosition();
+
+  void TuneBoxBoundaryByConstraint();
   void PositionInit();
   void PrecomputeForbiddenPoints();
   bool CheckForbiddenPointsInNewRegion(int bound_index, float original_value,

@@ -20,6 +20,7 @@ int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
     this->vertices.push_back(point);
     Eigen::Vector3f vc = Eigen::Vector3f(v->rgb()[0], v->rgb()[1], v->rgb()[2]);
     this->VertColors.push_back(vc);
+    this->label.push_back(v->label());
   }
 
   for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); mfiter++) {
@@ -99,6 +100,7 @@ int MeshViewer::show() {
   polyscope::init();
   auto mesh = polyscope::registerSurfaceMesh("Mesh", vertices, faces);
   mesh->addVertexColorQuantity("Sweep Dir", this->VertColors);
+  mesh->addVertexScalarQuantity("Label", this->label);
   polyscope::VolumeGrid *psGrid = polyscope::registerVolumeGrid(
       "Field", {dimX, dimY, dimZ}, bound_low, bound_high);
   uint32_t nData = dimX * dimY * dimZ;

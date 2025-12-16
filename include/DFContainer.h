@@ -1,6 +1,7 @@
 #ifndef __DFCONTAINER_H__
 #define __DFCONTAINER_H__
 #include "CuttingBox.h"
+#include "MeshCutter.h"
 #include "OctTree.h"
 #include "SweepDirDetector.h"
 #include "SweepDirFilter.h"

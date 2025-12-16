@@ -29,6 +29,7 @@ protected:
   glm::vec3 bound_low{};
   glm::vec3 bound_high{};
   std::vector<Eigen::Vector3f> SweepDir;
+  std::vector<int> label;
   uint32_t dimX;
   uint32_t dimY;
   uint32_t dimZ;

@@ -18,7 +18,8 @@ CuttingBox::CuttingBox(
   this->PrecomputeForbiddenPoints();
   this->DirCompute();
   this->PositionInit();
-  this->TunePosition();
+  // this->TunePosition();
+  this->TuneBoxBoundaryByConstraint();
   this->EnergyUpdate();
 }
 
@@ -258,6 +259,67 @@ void CuttingBox::DirCompute() {
   this->diry.normalize();
   this->dirz.normalize();
 }
+void CuttingBox::TuneBoxBoundaryByConstraint() {
+
+  float *bounds[] = {&this->MinX, &this->MaxX, &this->MinY,
+                     &this->MaxY, &this->MinZ, &this->MaxZ};
+
+  auto search_for_valid_move = [&](int bound_index, int dir_multiplier,
+                                   float max_search_range) -> bool {
+    float *current_param = bounds[bound_index];
+    float old_value = *current_param;
+
+    float search_moves[] = {
+        dir_multiplier * 5.0f * STEP_SIZE, dir_multiplier * 3.0f * STEP_SIZE,
+        dir_multiplier * 1.0f * STEP_SIZE, dir_multiplier * 0.5f * STEP_SIZE};
+
+    for (float move : search_moves) {
+      float new_value = old_value + move;
+
+      *current_param = new_value;
+
+      if (this->MinX >= this->MaxX || this->MinY >= this->MaxY ||
+          this->MinZ >= this->MaxZ) {
+        *current_param = old_value; // 恢复
+        continue;
+      }
+
+      if (!ValidBox()) {
+        *current_param = old_value; // 恢复
+        continue;
+      }
+
+      if (!CheckForbiddenPointsInNewRegion(bound_index, old_value, new_value)) {
+        *current_param = old_value; // 恢复
+        continue;
+      }
+
+      return true;
+    }
+
+    *current_param = old_value;
+    return false;
+  };
+
+  for (int i = 0; i < 6; ++i) {
+
+    int expansion_dir = (i % 2 != 0) ? 1 : -1;
+
+    if (search_for_valid_move(i, expansion_dir,
+                              /*max_search_range=*/100 * STEP_SIZE)) {
+      continue; // 找到有效的扩张，继续下一个边界
+    }
+
+    int contraction_dir = -expansion_dir;
+
+    if (search_for_valid_move(i, contraction_dir,
+                              /*max_search_range=*/100 * STEP_SIZE)) {
+      continue; // 找到有效的收缩，继续下一个边界
+    }
+  }
+
+  // Tuning 完成，边界 MinX/MaxX 等被更新为找到的第一个满足约束的有效位置
+}
 void CuttingBox::TunePosition() {
   // Update box tune stratagy: In each iteration, sequentially test all 6
   // boundaries (i). For each boundary, apply the FIRST valid move that reduces
@@ -430,7 +492,8 @@ void CuttingBox::PositionInit() {
   for (int x = 0; x < this->Energy[0][id].size(); x++) {
     for (int y = 0; y < this->Energy[0][id][0].size(); y++) {
       for (int z = 0; z < this->Energy[0][id][0][0].size(); z++) {
-        if (this->Energy[0][id][x][y][z] < MinEnergy) {
+        if (this->Energy[0][id][x][y][z] < MinEnergy &&
+            this->FieldLabel[x][y][z] >= 0) {
           MinEnergy = this->Energy[0][id][x][y][z];
           MinEnergyLabel = this->FieldLabel[x][y][z];
         }
