@@ -794,6 +794,27 @@ void DistanceField::ComputeDistanceField() {
       }
     }
   }
+
+  for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); ++mfiter) {
+    MeshLib::CToolFace *f = static_cast<MeshLib::CToolFace *>(mfiter.value());
+    int count = 0;
+    Eigen::Vector3f position = Eigen::Vector3f(0, 0, 0);
+    for (MeshLib::CTMesh::FaceVertexIterator fviter(f); !fviter.end();
+         ++fviter) {
+      auto v = fviter.value();
+      count++;
+      position += Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
+    }
+    position /= count;
+    for (int i = 0; i < this->CuttingHexLists.size(); i++) {
+      if (this->insideCuttingBox(position, CuttingHexLists[i])) {
+        f->rgb()[0] = abs(this->SweepDir[i][0]);
+        f->rgb()[1] = abs(this->SweepDir[i][1]);
+        f->rgb()[2] = abs(this->SweepDir[i][2]);
+        continue;
+      }
+    }
+  }
 }
 
 void DistanceField::DFS(MeshLib::CToolVertex *vert, int label) {
@@ -1161,4 +1182,5 @@ void DistanceField::SweepProjection_Regist() {
     this->ForbiddenBoundaryPoints = cb.GetForbiddenBoundaryPoints();
     this->CuttingHexLists.push_back(cb.GetBoxVertices());
   }
+  MeshCutter mc(this->mesh, this->CuttingHexLists);
 }

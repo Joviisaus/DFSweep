@@ -33,6 +33,8 @@ int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
       vid.push_back(fviter.value()->id() - 1);
     }
     this->faces.push_back(vid);
+    Eigen::Vector3f fc = Eigen::Vector3f(f->rgb()[0], f->rgb()[1], f->rgb()[2]);
+    this->FaceColors.push_back(fc);
   }
 
   return 0;
@@ -101,6 +103,7 @@ int MeshViewer::show() {
   auto mesh = polyscope::registerSurfaceMesh("Mesh", vertices, faces);
   mesh->addVertexColorQuantity("Sweep Dir", this->VertColors);
   mesh->addVertexScalarQuantity("Label", this->label);
+  mesh->addFaceColorQuantity("SweepDir", this->FaceColors);
   polyscope::VolumeGrid *psGrid = polyscope::registerVolumeGrid(
       "Field", {dimX, dimY, dimZ}, bound_low, bound_high);
   uint32_t nData = dimX * dimY * dimZ;

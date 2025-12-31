@@ -74,6 +74,7 @@ int SweepDirFilter::Filting() {
 }
 
 void SweepDirFilter::SweepDirFilting() {
+  int dir = 3;
   while (this->RestSize > 0) {
     int RestSize_Former = this->RestSize;
     int Current_Poped_Filter_id = Filting();

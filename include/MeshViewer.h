@@ -42,6 +42,7 @@ protected:
   std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists;
   std::vector<std::vector<float>> vertices;
   std::vector<Eigen::Vector3f> VertColors;
+  std::vector<Eigen::Vector3f> FaceColors;
   std::vector<std::vector<int>> faces;
 };
 

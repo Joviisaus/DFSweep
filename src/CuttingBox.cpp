@@ -18,8 +18,8 @@ CuttingBox::CuttingBox(
   this->PrecomputeForbiddenPoints();
   this->DirCompute();
   this->PositionInit();
-  // this->TunePosition();
-  this->TuneBoxBoundaryByConstraint();
+  this->TunePosition();
+  // this->TuneBoxBoundaryByConstraint();
   this->EnergyUpdate();
 }
 
