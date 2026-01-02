@@ -180,7 +180,17 @@ inline void CToolFace::_to_string() {
   parser._removeToken("label");
   parser._toString(m_string);
   stringstream iss;
-  iss << "label=(" << m_label << ")";
+  iss << "label=(" << m_label << ") ";
+  if (m_string.length() > 0) {
+    m_string += " ";
+  }
+  m_string += iss.str();
+
+  CParser parser2(m_string);
+  parser._removeToken("rgb");
+  parser._toString(m_string);
+  stringstream iss2;
+  iss << "rgb=(" << m_rgb[0] << " " << m_rgb[1] << " " << m_rgb[2] << ") ";
   if (m_string.length() > 0) {
     m_string += " ";
   }
