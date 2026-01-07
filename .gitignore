@@ -10,6 +10,12 @@ VSbuild/
 
 VSbuild/*
 
+Xbuild
+
+Xbuild/
+
+Xbuild/*
+
 TestData
 
 TestData/
