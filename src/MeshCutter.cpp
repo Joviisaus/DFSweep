@@ -42,13 +42,30 @@ void MeshCutter::MeshCut() {
 
   for (auto &boxVertices : this->CuttingHexLists) {
     for (int f_idx = 0; f_idx < 6; ++f_idx) {
-      // 获取六面体当前面片
       std::vector<Eigen::Vector3f> hexFace(4);
-      for (int i = 0; i < 4; ++i)
+      std::vector<Eigen::Vector3f> bhexFace(4);
+      Eigen::Vector3f center(0, 0, 0); // 用于计算中心
+
+      // 获取六面体当前面片
+      for (int i = 0; i < 4; ++i) {
         hexFace[i] = boxVertices.at(faceIndices[f_idx][i]);
+        bhexFace[i] = boxVertices.at(faceIndices[f_idx][i]);
+      }
       Eigen::Vector3f nQuad =
           (hexFace[1] - hexFace[0]).cross(hexFace[2] - hexFace[0]).normalized();
 
+      for (int i = 0; i < 4; ++i) {
+        bhexFace[i] = boxVertices.at(faceIndices[f_idx][i]);
+        center += bhexFace[i];
+      }
+      center /= 4.0f; // 计算四边形中心
+
+      // --- 新增逻辑：扩大面片 10% ---
+      float scale = 1.1f; // 扩大比例
+      for (int i = 0; i < 4; ++i) {
+        // 每个顶点向远离中心的方向移动
+        bhexFace[i] = center + scale * (bhexFace[i] - center);
+      }
       // --- 第一步：手动分裂所有相交边 ---
       std::vector<MeshLib::CToolEdge *> edges;
       for (MeshLib::MeshEdgeIterator eeiter(mesh); !eeiter.end(); ++eeiter)
@@ -68,7 +85,7 @@ void MeshCutter::MeshCut() {
 
         Eigen::Vector3f intersect;
         if (intersectSegmentPlane(p1, p2, hexFace[0], nQuad, intersect)) {
-          if (isPointInPolygon(intersect, hexFace)) {
+          if (isPointInPolygon(intersect, bhexFace)) {
             if ((intersect - p1).norm() > 1e-4 &&
                 (intersect - p2).norm() > 1e-4) {
               ManualSplitEdge(e, intersect, nextVertexId, nextFaceId);
@@ -78,28 +95,28 @@ void MeshCutter::MeshCut() {
       }
 
       // --- 第二步：在面内连接新产生的顶点 ---
-      std::vector<MeshLib::CToolFace *> faces;
-      for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); ++mfiter)
-        faces.push_back(static_cast<MeshLib::CToolFace *>(mfiter.value()));
-
-      for (auto *f : faces) {
-        std::vector<MeshLib::CToolVertex *> onPlaneVerts;
-        // 遍历面片所有顶点，找出落在当前切割平面上的点
-        for (MeshLib::CTMesh::FaceVertexIterator fviter(f); !fviter.end();
-             ++fviter) {
-          MeshLib::CToolVertex *v =
-              static_cast<MeshLib::CToolVertex *>(fviter.value());
-          Eigen::Vector3f p(v->point()[0], v->point()[1], v->point()[2]);
-          if (std::abs(nQuad.dot(p - hexFace[0])) < 1e-4) {
-            onPlaneVerts.push_back(v);
-          }
-        }
-
-        // 如果面内有两个点都在平面上，说明需要切开这个面
-        if (onPlaneVerts.size() == 2) {
-          ManualSplitFace(f, onPlaneVerts[0], onPlaneVerts[1], nextFaceId);
-        }
-      }
+      // std::vector<MeshLib::CToolFace *> faces;
+      // for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); ++mfiter)
+      //   faces.push_back(static_cast<MeshLib::CToolFace *>(mfiter.value()));
+      //
+      // for (auto *f : faces) {
+      //   std::vector<MeshLib::CToolVertex *> onPlaneVerts;
+      //   // 遍历面片所有顶点，找出落在当前切割平面上的点
+      //   for (MeshLib::CTMesh::FaceVertexIterator fviter(f); !fviter.end();
+      //        ++fviter) {
+      //     MeshLib::CToolVertex *v =
+      //         static_cast<MeshLib::CToolVertex *>(fviter.value());
+      //     Eigen::Vector3f p(v->point()[0], v->point()[1], v->point()[2]);
+      //     if (std::abs(nQuad.dot(p - hexFace[0])) < 1e-4) {
+      //       onPlaneVerts.push_back(v);
+      //     }
+      //   }
+      //
+      //   // 如果面内有两个点都在平面上，说明需要切开这个面
+      //   if (onPlaneVerts.size() == 2) {
+      //     ManualSplitFace(f, onPlaneVerts[0], onPlaneVerts[1], nextFaceId);
+      //   }
+      // }
     }
   }
 }
@@ -351,6 +368,7 @@ void MeshCutter::SafeDeleteFace(MeshLib::CToolFace *f) {
   this->mesh->deleteFace(f);
 
   // this->mesh->edges().remove_if(
-  //     [](MeshLib::CEdge *e) { return e != nullptr && e->halfedge(0) == NULL;
+  //     [](MeshLib::CEdge *e) { return e != nullptr && e->halfedge(0) ==
+  //     NULL;
   //     });
 }
