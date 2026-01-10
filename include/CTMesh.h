@@ -146,16 +146,16 @@ public:
   CPoint &normal() { return m_normal; };
   CPoint &rgb() { return m_rgb; };
   double &area() { return m_area; };
-  int &type() { return m_type; };
   int &label() { return m_label; };
+  int &sweeplabel() { return m_sweeplabel; }
 
 protected:
   bool m_visited;
   CPoint m_normal;
   double m_area;
   CPoint m_rgb;
-  int m_type;
   int m_label;
+  int m_sweeplabel;
 };
 
 inline void CToolFace::_from_string() {

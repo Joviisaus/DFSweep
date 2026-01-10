@@ -1,5 +1,6 @@
 #include "DFContainer.h"
 #include "CTMesh.h"
+#include "ColorImplementer.h"
 #include "SweepDirDetector.h"
 #include "SweepDirFilter.h"
 #include "SweepDirSpliter.h"
@@ -797,6 +798,7 @@ void DistanceField::ComputeDistanceField() {
 
   for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); ++mfiter) {
     MeshLib::CToolFace *f = static_cast<MeshLib::CToolFace *>(mfiter.value());
+    f->sweeplabel() = -1;
     int count = 0;
     Eigen::Vector3f position = Eigen::Vector3f(0, 0, 0);
     for (MeshLib::CTMesh::FaceVertexIterator fviter(f); !fviter.end();
@@ -811,9 +813,18 @@ void DistanceField::ComputeDistanceField() {
         f->rgb()[0] = abs(this->SweepDir[i][0]);
         f->rgb()[1] = abs(this->SweepDir[i][1]);
         f->rgb()[2] = abs(this->SweepDir[i][2]);
+        f->sweeplabel() = i;
         continue;
       }
     }
+  }
+
+  Implementer implementer(this->mesh);
+  for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); ++mfiter) {
+    MeshLib::CToolFace *f = static_cast<MeshLib::CToolFace *>(mfiter.value());
+    f->rgb()[0] = abs(this->SweepDir[f->sweeplabel()][0]);
+    f->rgb()[1] = abs(this->SweepDir[f->sweeplabel()][1]);
+    f->rgb()[2] = abs(this->SweepDir[f->sweeplabel()][2]);
   }
 }
 

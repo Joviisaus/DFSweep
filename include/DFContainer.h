@@ -1,5 +1,6 @@
 #ifndef __DFCONTAINER_H__
 #define __DFCONTAINER_H__
+#include "ColorImplementer.h"
 #include "CuttingBox.h"
 #include "MeshCutter.h"
 #include "OctTree.h"
@@ -8,6 +9,7 @@
 #include <Eigen/Eigen>
 #include <Eigen/src/Core/Matrix.h>
 #include <float.h>
+
 
 inline double epsilon = 1e-2f;
 inline double PI = 3.1415926;
