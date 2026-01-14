@@ -30,6 +30,8 @@ public:
   int &label() { return m_label; };
   bool &FeaturePoint() { return m_FeaturePoint; };
   bool &marked() { return m_marked; };
+  bool &sharp() { return m_sharp; };
+  int &cflabel() { return m_cflabel; };
 
 protected:
   CPoint m_rgb;
@@ -37,6 +39,8 @@ protected:
   int m_label;
   bool m_FeaturePoint;
   bool m_marked;
+  bool m_sharp;
+  int m_cflabel;
 };
 
 inline void CToolVertex::_from_string() {
@@ -148,6 +152,7 @@ public:
   double &area() { return m_area; };
   int &label() { return m_label; };
   int &sweeplabel() { return m_sweeplabel; }
+  int &sweepFaceType() { return m_sweepFaceType; }
 
 protected:
   bool m_visited;
@@ -156,6 +161,7 @@ protected:
   CPoint m_rgb;
   int m_label;
   int m_sweeplabel;
+  int m_sweepFaceType;
 };
 
 inline void CToolFace::_from_string() {
@@ -191,6 +197,16 @@ inline void CToolFace::_to_string() {
   parser._toString(m_string);
   stringstream iss2;
   iss << "rgb=(" << m_rgb[0] << " " << m_rgb[1] << " " << m_rgb[2] << ") ";
+  if (m_string.length() > 0) {
+    m_string += " ";
+  }
+  m_string += iss.str();
+
+  CParser parser3(m_string);
+  parser._removeToken("sweeplabel");
+  parser._toString(m_string);
+  stringstream iss3;
+  iss << " sweeplabel= (" << m_sweeplabel << ")";
   if (m_string.length() > 0) {
     m_string += " ";
   }

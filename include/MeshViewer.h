@@ -9,6 +9,7 @@
 #include "polyscope/volume_grid.h"
 #include <Eigen/Eigen>
 
+
 class MeshViewer {
 public:
   int show();
@@ -38,11 +39,14 @@ protected:
   float *ForbiddenBoundaryPoints;
   int *GradianceScalar;
   std::vector<float *> SweepProjScalars;
+  std::vector<Eigen::Vector3f> sharpPoints;
+  std::vector<std::array<size_t, 2>> Curves;
   std::vector<float *> SweepProjEnergies;
   std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists;
   std::vector<std::vector<float>> vertices;
   std::vector<Eigen::Vector3f> VertColors;
   std::vector<Eigen::Vector3f> FaceColors;
+  std::vector<int> FaceSweepTypes;
   std::vector<std::vector<int>> faces;
 };
 

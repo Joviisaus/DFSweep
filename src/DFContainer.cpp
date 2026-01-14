@@ -826,6 +826,29 @@ void DistanceField::ComputeDistanceField() {
     f->rgb()[1] = abs(this->SweepDir[f->sweeplabel()][1]);
     f->rgb()[2] = abs(this->SweepDir[f->sweeplabel()][2]);
   }
+
+  for (MeshLib::MeshFaceIterator mviter(this->mesh); !mviter.end(); ++mviter) {
+    MeshLib::CToolFace *face =
+        static_cast<MeshLib::CToolFace *>(mviter.value());
+    CPoint p1 = (face->halfedge()->target()->point() -
+                 face->halfedge()->source()->point());
+    CPoint p2 = (face->halfedge()->he_next()->target()->point() -
+                 face->halfedge()->he_next()->source()->point());
+    CPoint normal = p1 ^ p2;
+    normal /= normal.norm();
+    face->normal() = normal;
+    CPoint sweepDir = face->rgb();
+    sweepDir /= sweepDir.norm();
+    double angle = normal * sweepDir;
+    face->sweepFaceType() = 0;
+    if (angle > 0.8) {
+      face->sweepFaceType() = 1;
+    } else if (abs(angle) < 0.1) {
+      face->sweepFaceType() = 2;
+    } else if (angle < -0.8) {
+      face->sweepFaceType() = 3;
+    }
+  }
 }
 
 void DistanceField::DFS(MeshLib::CToolVertex *vert, int label) {

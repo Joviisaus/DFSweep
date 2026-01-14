@@ -35,6 +35,30 @@ int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
     this->faces.push_back(vid);
     Eigen::Vector3f fc = Eigen::Vector3f(f->rgb()[0], f->rgb()[1], f->rgb()[2]);
     this->FaceColors.push_back(fc);
+    int ft = f->sweepFaceType();
+    this->FaceSweepTypes.push_back(ft);
+  }
+
+  int eid = 0;
+  for (MeshLib::MeshEdgeIterator meiter(mesh); !meiter.end(); ++meiter) {
+    MeshLib::CToolEdge *e = static_cast<MeshLib::CToolEdge *>(meiter.value());
+    if (e->sharp()) {
+      Eigen::Vector3f p1;
+      Eigen::Vector3f p2;
+      p1[0] = e->halfedge(0)->source()->point()[0];
+      p1[1] = e->halfedge(0)->source()->point()[1];
+      p1[2] = e->halfedge(0)->source()->point()[2];
+      p2[0] = e->halfedge(0)->target()->point()[0];
+      p2[1] = e->halfedge(0)->target()->point()[1];
+      p2[2] = e->halfedge(0)->target()->point()[2];
+      sharpPoints.push_back(p1);
+      sharpPoints.push_back(p2);
+      std::array<size_t, 2> edge;
+      edge[0] = 2 * eid;
+      edge[1] = 2 * eid + 1;
+      Curves.push_back(edge);
+      eid++;
+    }
   }
 
   return 0;
@@ -100,10 +124,13 @@ void MeshViewer::setGrid(
 
 int MeshViewer::show() {
   polyscope::init();
+  auto edge =
+      polyscope::registerCurveNetwork("Sharp Edges", sharpPoints, Curves);
   auto mesh = polyscope::registerSurfaceMesh("Mesh", vertices, faces);
   mesh->addVertexColorQuantity("Sweep Dir", this->VertColors);
   mesh->addVertexScalarQuantity("Label", this->label);
   mesh->addFaceColorQuantity("SweepDir", this->FaceColors);
+  mesh->addFaceScalarQuantity("FaceSweepTypes", this->FaceSweepTypes);
   polyscope::VolumeGrid *psGrid = polyscope::registerVolumeGrid(
       "Field", {dimX, dimY, dimZ}, bound_low, bound_high);
   uint32_t nData = dimX * dimY * dimZ;

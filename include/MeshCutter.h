@@ -21,7 +21,7 @@ private:
                                  const std::vector<Eigen::Vector3f> &quad,
                                  std::vector<Eigen::Vector3f> &outPoints);
   void ManualSplitEdge(MeshLib::CToolEdge *e, Eigen::Vector3f pos, int &vId,
-                       int &fId);
+                       int &fId, int cfid);
 
   void ManualSplitFace(MeshLib::CToolFace *f, MeshLib::CToolVertex *v1,
                        MeshLib::CToolVertex *v2, int &fId);

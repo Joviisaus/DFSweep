@@ -9,6 +9,55 @@ MeshCutter::MeshCutter(
   this->mesh = mesh;
   this->CuttingHexLists = CuttingHexLists;
   this->MeshCut();
+
+  for (MeshLib::MeshEdgeIterator meiter(mesh); !meiter.end(); ++meiter) {
+    MeshLib::CToolEdge *edge =
+        static_cast<MeshLib::CToolEdge *>(meiter.value());
+    MeshLib::CToolVertex *p1 =
+        static_cast<MeshLib::CToolVertex *>(edge->halfedge(0)->target());
+    MeshLib::CToolVertex *p2 =
+        static_cast<MeshLib::CToolVertex *>(edge->halfedge(0)->source());
+    Eigen::Vector3f p1point;
+    p1point[0] = p1->point()[0];
+    p1point[1] = p1->point()[1];
+    p1point[2] = p1->point()[2];
+    Eigen::Vector3f p2point;
+    p2point[0] = p2->point()[0];
+    p2point[1] = p2->point()[1];
+    p2point[2] = p2->point()[2];
+    const int faceIndices[6][4] = {{0, 1, 3, 2}, {4, 5, 7, 6}, {0, 1, 5, 4},
+                                   {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 3, 7, 5}};
+    bool onSamePlane = false;
+    for (int bbVid = 0; bbVid < this->CuttingHexLists.size(); bbVid++) {
+      for (int f_idx = 0; f_idx < 6; ++f_idx) {
+        Eigen::Vector3f pA =
+            this->CuttingHexLists[bbVid].at(faceIndices[f_idx][0]);
+        Eigen::Vector3f pB =
+            this->CuttingHexLists[bbVid].at(faceIndices[f_idx][1]);
+        Eigen::Vector3f pC =
+            this->CuttingHexLists[bbVid].at(faceIndices[f_idx][2]);
+
+        Eigen::Vector3f nQuad = (pB - pA).cross(pC - pA).normalized();
+
+        float dist1 = std::abs(nQuad.dot(p1point - pA));
+        float dist2 = std::abs(nQuad.dot(p2point - pA));
+
+        const float EPSILON = 1e-4f;
+        if (dist1 < EPSILON && dist2 < EPSILON) {
+          onSamePlane = true;
+          break;
+        }
+      }
+      if (onSamePlane)
+        break;
+    }
+
+    if (onSamePlane) {
+      edge->sharp() = true;
+    } else {
+      edge->sharp() = false;
+    }
+  }
 }
 
 // --- 基础几何辅助函数 ---
@@ -32,15 +81,17 @@ void MeshCutter::MeshCut() {
 
   int nextVertexId = -1;
   int nextFaceId = -1;
-  for (MeshLib::MeshVertexIterator mviter(mesh); !mviter.end(); mviter++)
+  for (MeshLib::MeshVertexIterator mviter(mesh); !mviter.end(); mviter++) {
     if (mviter.value()->id() > nextVertexId)
       nextVertexId = mviter.value()->id();
+    static_cast<MeshLib::CToolVertex *>(mviter.value())->sharp() = false;
+  }
   for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); mfiter++) {
     if (mfiter.value()->id() > nextFaceId)
       nextFaceId = mfiter.value()->id();
   }
 
-  for (auto &boxVertices : this->CuttingHexLists) {
+  for (int bbVid = 0; bbVid < this->CuttingHexLists.size(); bbVid++) {
     for (int f_idx = 0; f_idx < 6; ++f_idx) {
       std::vector<Eigen::Vector3f> hexFace(4);
       std::vector<Eigen::Vector3f> bhexFace(4);
@@ -48,14 +99,14 @@ void MeshCutter::MeshCut() {
 
       // 获取六面体当前面片
       for (int i = 0; i < 4; ++i) {
-        hexFace[i] = boxVertices.at(faceIndices[f_idx][i]);
-        bhexFace[i] = boxVertices.at(faceIndices[f_idx][i]);
+        hexFace[i] = this->CuttingHexLists[bbVid].at(faceIndices[f_idx][i]);
+        bhexFace[i] = this->CuttingHexLists[bbVid].at(faceIndices[f_idx][i]);
       }
       Eigen::Vector3f nQuad =
           (hexFace[1] - hexFace[0]).cross(hexFace[2] - hexFace[0]).normalized();
 
       for (int i = 0; i < 4; ++i) {
-        bhexFace[i] = boxVertices.at(faceIndices[f_idx][i]);
+        bhexFace[i] = this->CuttingHexLists[bbVid].at(faceIndices[f_idx][i]);
         center += bhexFace[i];
       }
       center /= 4.0f; // 计算四边形中心
@@ -85,12 +136,13 @@ void MeshCutter::MeshCut() {
 
         Eigen::Vector3f intersect;
         if (intersectSegmentPlane(p1, p2, hexFace[0], nQuad, intersect)) {
-          if (isPointInPolygon(intersect, bhexFace)) {
-            if ((intersect - p1).norm() > 1e-4 &&
-                (intersect - p2).norm() > 1e-4) {
-              ManualSplitEdge(e, intersect, nextVertexId, nextFaceId);
-            }
+          // if (isPointInPolygon(intersect, bhexFace)) {
+          if ((intersect - p1).norm() > 1e-4 &&
+              (intersect - p2).norm() > 1e-4) {
+            ManualSplitEdge(e, intersect, nextVertexId, nextFaceId,
+                            6 * bbVid + f_idx);
           }
+          // }
         }
       }
 
@@ -122,7 +174,7 @@ void MeshCutter::MeshCut() {
 }
 
 void MeshCutter::ManualSplitEdge(MeshLib::CToolEdge *e, Eigen::Vector3f pos,
-                                 int &vId, int &fId) {
+                                 int &vId, int &fId, int cfid) {
   // 1. 提取邻接面和端点
   MeshLib::CToolHalfEdge *he0 =
       static_cast<MeshLib::CToolHalfEdge *>(e->halfedge(0));
@@ -156,6 +208,8 @@ void MeshCutter::ManualSplitEdge(MeshLib::CToolEdge *e, Eigen::Vector3f pos,
   MeshLib::CToolVertex *nv =
       static_cast<MeshLib::CToolVertex *>(this->mesh->createVertex(++vId));
   nv->point() = CPoint(pos.x(), pos.y(), pos.z());
+  nv->sharp() = true;
+  nv->cflabel() = cfid;
 
   loop0.push_back(v_src);
   loop0.push_back(
