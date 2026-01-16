@@ -20,7 +20,7 @@ CuttingBox::CuttingBox(
   this->PositionInit();
   // this->TunePosition();
   this->TuneBoxBoundaryByConstraint();
-  this->EnergyUpdate();
+  // this->EnergyUpdate();
 }
 
 void CuttingBox::PrecomputeForbiddenPoints() {
@@ -154,111 +154,61 @@ bool CuttingBox::CheckForbiddenPointsInNewRegion(int bound_index,
 
   return ValidGrow;
 }
-/**
- * @brief Computes MatchingEnergy for all sweep directions relative to the
- * region defined by this->id, and selects three non-coplanar directions:
- * 1. dirx is fixed to SweepDir[this->id].
- * 2. diry and dirz are selected from the remaining directions based on minimum
- * MatchingEnergy and non-coplanarity relative to the chosen axes.
- */
+
 void CuttingBox::DirCompute() {
-  this->dirx = Eigen::Vector3f::Zero();
-  this->diry = Eigen::Vector3f::Zero();
-  this->dirz = Eigen::Vector3f::Zero();
-
-  if (this->id < 0 || this->id >= this->SweepDir.size()) {
-    std::cerr << "Error: Invalid ID for SweepDir array." << std::endl;
-    std::cout << "Single Sweep Volume;" << std::endl;
-    return;
-  }
-
-  this->dirx = this->SweepDir[this->id];
-
-  std::vector<std::pair<float, int>> energy_index_pairs;
-  energy_index_pairs.reserve(this->SweepDir.size());
-
-  for (int index = 0; index < this->SweepDir.size(); index++) {
-    float ME = 0;
-    if (index == this->id) {
-      ME = FLT_MAX;
-    } else {
-      for (size_t x = 0; x < this->Energy[0][index].size(); x++) {
-        for (size_t y = 0; y < this->Energy[0][index][0].size(); y++) {
-          for (size_t z = 0; z < this->Energy[0][index][0][0].size(); z++) {
-            if (this->Energy[0][id][x][y][z] < -2e-2) {
-              ME += this->Energy[0][index][x][y][z];
-            }
-          }
-        }
-      }
-    }
-
-    if (index != this->id) {
-      energy_index_pairs.push_back({ME, index});
-    }
-  }
-
-  std::sort(energy_index_pairs.begin(), energy_index_pairs.end(),
-            [](const std::pair<float, int> &a, const std::pair<float, int> &b) {
-              return a.first < b.first;
-            });
-
-  std::vector<int> final_indices;
-  final_indices.reserve(2);
-  const float PLANE_TOLERANCE = 1e-4f;
-
-  Eigen::Vector3f temp_diry = Eigen::Vector3f::Zero();
-
-  for (const auto &pair : energy_index_pairs) {
-    int current_index = pair.second;
-    const Eigen::Vector3f &v_current = this->SweepDir[current_index];
-
-    if (final_indices.empty()) {
-      if ((this->dirx.cross(v_current)).norm() > PLANE_TOLERANCE) {
-        final_indices.push_back(current_index);
-        temp_diry = v_current;
-      }
-    } else if (final_indices.size() == 1) {
-      float mixed_product =
-          std::abs(this->dirx.dot(temp_diry.cross(v_current)));
-
-      if (mixed_product > PLANE_TOLERANCE) {
-        final_indices.push_back(current_index);
-        this->diry = temp_diry;
-        this->dirz = v_current;
-
-        break;
-      }
-    }
-  }
-
-  if (final_indices.size() == 2) {
-
-  } else if (final_indices.size() == 1) {
-    this->diry = temp_diry; // 确认 diry
-
-    Eigen::Vector3f cross_dir = this->dirx.cross(this->diry);
-
-    if (cross_dir.norm() < PLANE_TOLERANCE) {
-      final_indices.clear();
-    } else {
-      this->dirz = cross_dir;
-    }
-  }
-
-  if (final_indices.size() < 1) {
-    std::cout << "Single Sweep Volume;" << std::endl;
-
-    this->dirx = this->SweepDir[this->id];
+    // 1. 初始化并校验基础方向 dirx
+    this->dirx = Eigen::Vector3f::Zero();
     this->diry = Eigen::Vector3f::Zero();
     this->dirz = Eigen::Vector3f::Zero();
-    return;
-  }
 
-  this->dirx.normalize();
-  this->diry.normalize();
-  this->dirz.normalize();
+    if (this->id < 0 || this->id >= (int)this->SweepDir.size()) {
+        std::cerr << "Error: Invalid ID for SweepDir array." << std::endl;
+        return;
+    }
+
+    // dirx 保持不变
+    this->dirx = this->SweepDir[this->id].normalized();
+
+    // 2. 寻找与 dirx 最“垂直”的向量作为 diry
+    float min_dot = 1.0f; // 点积越接近 0 越垂直
+    int best_y_index = -1;
+    const float COLINEAR_TOLERANCE = 0.999f; // 用于检查是否共线
+
+    for (int i = 0; i < (int)this->SweepDir.size(); ++i) {
+        if (i == this->id) continue;
+
+        Eigen::Vector3f v_current = this->SweepDir[i].normalized();
+        // 计算点积的绝对值，越接近 0 说明夹角越接近 90 度
+        float dot_product = std::abs(this->dirx.dot(v_current));
+
+        // 必须确保不与 dirx 共线（夹角不能太小或接近180度）
+        if (dot_product < COLINEAR_TOLERANCE) {
+            if (dot_product < min_dot) {
+                min_dot = dot_product;
+                best_y_index = i;
+            }
+        }
+    }
+
+    // 3. 处理查找结果
+    if (best_y_index != -1) {
+        Eigen::Vector3f v_y = this->SweepDir[best_y_index].normalized();
+
+        // --- 施密特正交化确保严格垂直 ---
+        // diry = v_y - (dirx · v_y) * dirx
+        this->diry = (v_y - this->dirx.dot(v_y) * this->dirx).normalized();
+        
+        // dirz 由前两个方向叉乘得到
+        this->dirz = this->dirx.cross(this->diry).normalized();
+
+    } else {
+        // 如果没有找到任何不共线的向量
+        std::cout << "Single Sweep Volume: No suitable perpendicular vector found." << std::endl;
+        this->diry = Eigen::Vector3f::Zero();
+        this->dirz = Eigen::Vector3f::Zero();
+    }
 }
+
 void CuttingBox::TuneBoxBoundaryByConstraint() {
 
   float *bounds[] = {&this->MinX, &this->MaxX, &this->MinY,

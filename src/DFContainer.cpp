@@ -786,7 +786,12 @@ void DistanceField::ComputeDistanceField() {
         static_cast<MeshLib::CToolVertex *>(mviter.value());
     Eigen::Vector3f position =
         Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
+    Eigen::Vector3f vNormal;
+    vNormal[0] = v->normal()[0];
+    vNormal[1] = v->normal()[1];
+    vNormal[2] = v->normal()[2];
     for (int i = 0; i < this->CuttingHexLists.size(); i++) {
+      // if (this->insideCuttingBox(position, CuttingHexLists[i])&&(abs(vNormal.dot(this->SweepDir[i]))<0.1||abs(vNormal.dot(this->SweepDir[i]))-1<0.1)) {
       if (this->insideCuttingBox(position, CuttingHexLists[i])) {
         v->rgb()[0] = abs(this->SweepDir[i][0]);
         v->rgb()[1] = abs(this->SweepDir[i][1]);
@@ -808,8 +813,14 @@ void DistanceField::ComputeDistanceField() {
       position += Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
     }
     position /= count;
+    Eigen::Vector3f fNormal;
+    fNormal[0] = f->normal()[0];
+    fNormal[1] = f->normal()[1];
+    fNormal[2] = f->normal()[2];
+
     for (int i = 0; i < this->CuttingHexLists.size(); i++) {
       if (this->insideCuttingBox(position, CuttingHexLists[i])) {
+      // if (this->insideCuttingBox(position, CuttingHexLists[i])&&(abs(fNormal.dot(this->SweepDir[i]))<0.1||abs(fNormal.dot(this->SweepDir[i]))-1<0.1)) {
         f->rgb()[0] = abs(this->SweepDir[i][0]);
         f->rgb()[1] = abs(this->SweepDir[i][1]);
         f->rgb()[2] = abs(this->SweepDir[i][2]);
@@ -826,7 +837,7 @@ void DistanceField::ComputeDistanceField() {
     f->rgb()[1] = abs(this->SweepDir[f->sweeplabel()][1]);
     f->rgb()[2] = abs(this->SweepDir[f->sweeplabel()][2]);
   }
-
+  
   for (MeshLib::MeshFaceIterator mviter(this->mesh); !mviter.end(); ++mviter) {
     MeshLib::CToolFace *face =
         static_cast<MeshLib::CToolFace *>(mviter.value());
