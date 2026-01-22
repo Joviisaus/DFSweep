@@ -10,7 +10,6 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <float.h>
 
-
 inline double epsilon = 1e-2f;
 inline double PI = 3.1415926;
 inline int SampleSize = 100;
@@ -44,6 +43,8 @@ public:
   std::vector<std::vector<std::vector<float>>> getGradianceDiff() {
     return this->GradianceDiff;
   }
+
+  void exportPlanesToFile(const std::string &filename);
   std::vector<std::map<int, Eigen::Vector3f>> getCuttingHex() {
     return this->CuttingHexLists;
   };

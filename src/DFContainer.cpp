@@ -18,6 +18,54 @@ DistanceField::DistanceField(MeshLib::CTMesh *mesh) {
   SetMesh(mesh);
 }
 
+void DistanceField::exportPlanesToFile(const std::string &filename) {
+  std::ofstream outFile(filename);
+  if (!outFile.is_open())
+    return;
+
+  std::set<std::string> seenPlanes;
+
+  outFile << "# Blender Cutting Planes Data\n";
+  outFile << "planes_params = [\n";
+
+  const int faceIndices[6][4] = {{0, 1, 3, 2}, {4, 5, 7, 6}, {0, 1, 5, 4},
+                                 {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 3, 7, 5}};
+
+  for (const auto &hex : CuttingHexLists) {
+    for (int f_idx = 0; f_idx < 6; ++f_idx) {
+      const Eigen::Vector3f &pA = hex.at(faceIndices[f_idx][0]);
+      const Eigen::Vector3f &pB = hex.at(faceIndices[f_idx][1]);
+      const Eigen::Vector3f &pC = hex.at(faceIndices[f_idx][2]);
+
+      Eigen::Vector3f nQuad = (pB - pA).cross(pC - pA);
+      if (nQuad.norm() < 1e-6f)
+        continue;
+      nQuad.normalize();
+
+      float D = -nQuad.dot(pA);
+
+      char buf[128];
+      sprintf(buf, "%.4f,%.4f,%.4f,%.4f", nQuad.x(), nQuad.y(), nQuad.z(), D);
+      std::string planeId(buf);
+
+      sprintf(buf, "%.4f,%.4f,%.4f,%.4f", -nQuad.x(), -nQuad.y(), -nQuad.z(),
+              -D);
+      std::string invPlaneId(buf);
+
+      if (seenPlanes.find(planeId) == seenPlanes.end() &&
+          seenPlanes.find(invPlaneId) == seenPlanes.end()) {
+        outFile << "    (" << std::fixed << std::setprecision(6) << nQuad.x()
+                << ", " << nQuad.y() << ", " << nQuad.z() << ", " << D
+                << "),\n";
+        seenPlanes.insert(planeId);
+      }
+    }
+  }
+
+  outFile << "]\n";
+  outFile.close();
+}
+
 void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
   this->mesh = mesh;
   this->PointList.clear();
@@ -791,7 +839,9 @@ void DistanceField::ComputeDistanceField() {
     vNormal[1] = v->normal()[1];
     vNormal[2] = v->normal()[2];
     for (int i = 0; i < this->CuttingHexLists.size(); i++) {
-      // if (this->insideCuttingBox(position, CuttingHexLists[i])&&(abs(vNormal.dot(this->SweepDir[i]))<0.1||abs(vNormal.dot(this->SweepDir[i]))-1<0.1)) {
+      // if (this->insideCuttingBox(position,
+      // CuttingHexLists[i])&&(abs(vNormal.dot(this->SweepDir[i]))<0.1||abs(vNormal.dot(this->SweepDir[i]))-1<0.1))
+      // {
       if (this->insideCuttingBox(position, CuttingHexLists[i])) {
         v->rgb()[0] = abs(this->SweepDir[i][0]);
         v->rgb()[1] = abs(this->SweepDir[i][1]);
@@ -820,7 +870,9 @@ void DistanceField::ComputeDistanceField() {
 
     for (int i = 0; i < this->CuttingHexLists.size(); i++) {
       if (this->insideCuttingBox(position, CuttingHexLists[i])) {
-      // if (this->insideCuttingBox(position, CuttingHexLists[i])&&(abs(fNormal.dot(this->SweepDir[i]))<0.1||abs(fNormal.dot(this->SweepDir[i]))-1<0.1)) {
+        // if (this->insideCuttingBox(position,
+        // CuttingHexLists[i])&&(abs(fNormal.dot(this->SweepDir[i]))<0.1||abs(fNormal.dot(this->SweepDir[i]))-1<0.1))
+        // {
         f->rgb()[0] = abs(this->SweepDir[i][0]);
         f->rgb()[1] = abs(this->SweepDir[i][1]);
         f->rgb()[2] = abs(this->SweepDir[i][2]);
@@ -837,7 +889,7 @@ void DistanceField::ComputeDistanceField() {
     f->rgb()[1] = abs(this->SweepDir[f->sweeplabel()][1]);
     f->rgb()[2] = abs(this->SweepDir[f->sweeplabel()][2]);
   }
-  
+
   for (MeshLib::MeshFaceIterator mviter(this->mesh); !mviter.end(); ++mviter) {
     MeshLib::CToolFace *face =
         static_cast<MeshLib::CToolFace *>(mviter.value());

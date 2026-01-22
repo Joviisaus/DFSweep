@@ -58,6 +58,7 @@ int main(int argc, char **argv) {
   }
   DistanceField.GridScalar(SampleSize);
   DistanceField.ComputeDistanceField();
+  DistanceField.exportPlanesToFile("PlaneLists.txt");
   // DistanceField.SaveFieldToBinary("distance_field.bin");
   std::string output_str =
       (std::filesystem::path(input_file).parent_path() /
