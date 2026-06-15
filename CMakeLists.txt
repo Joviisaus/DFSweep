@@ -23,6 +23,8 @@ endif()
 option(ENABLE_CUDA "Enable CUDA support" ON)
 set(USE_CUDA FALSE)
 
+set(USE_METAL FALSE)
+
 if(WIN32 AND MSVC AND ENABLE_CUDA)
     enable_language(CUDA)
     find_package(CUDAToolkit QUIET)
@@ -57,8 +59,19 @@ if(WIN32 AND MSVC AND ENABLE_CUDA)
     else()
         message(WARNING "CUDA toolkit not found. CUDA disabled.")
     endif()
+elseif(APPLE)
+    find_library(METAL_FRAMEWORK Metal)
+    find_library(FOUNDATION_FRAMEWORK Foundation)
+    if(METAL_FRAMEWORK AND FOUNDATION_FRAMEWORK)
+        message(STATUS "Apple Metal framework found, enabling Metal GPU support")
+        add_definitions(-DENABLE_METAL)
+        set(USE_METAL TRUE)
+        enable_language(OBJCXX)
+    else()
+        message(STATUS "Metal framework not found, GPU acceleration disabled.")
+    endif()
 else()
-    message(STATUS "CUDA not checked (only active on Windows + MSVC).")
+    message(STATUS "CUDA not checked (only active on Windows + MSVC). Metal not available (not macOS).")
 endif()
 
 set(USE_OMP FALSE)
@@ -84,6 +97,10 @@ if(USE_CUDA)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/cuh)
 endif()
 
+if(USE_METAL)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/metal)
+endif()
+
 file(GLOB SOURCE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
@@ -98,6 +115,20 @@ if(USE_CUDA)
         list(APPEND SOURCE_FILES ${CUDA_SOURCE_FILES})
         set_source_files_properties(${CUDA_SOURCE_FILES} PROPERTIES LANGUAGE CUDA)
         message(STATUS "CUDA sources added: ${CUDA_SOURCE_FILES}")
+    endif()
+endif()
+
+if(USE_METAL)
+    file(GLOB METAL_SOURCE_FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/metal/*.mm
+    )
+    if(METAL_SOURCE_FILES)
+        list(APPEND SOURCE_FILES ${METAL_SOURCE_FILES})
+        set_source_files_properties(${METAL_SOURCE_FILES} PROPERTIES
+            LANGUAGE OBJCXX
+            COMPILE_FLAGS "-fobjc-arc"
+        )
+        message(STATUS "Metal sources added: ${METAL_SOURCE_FILES}")
     endif()
 endif()
 
@@ -200,6 +231,21 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 if(USE_OMP)
     target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+if(USE_METAL)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        ${METAL_FRAMEWORK}
+        ${FOUNDATION_FRAMEWORK}
+    )
+    file(GLOB METAL_SHADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/metal/*.metal)
+    foreach(SHADER ${METAL_SHADER_FILES})
+        get_filename_component(SHADER_NAME ${SHADER} NAME)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy ${SHADER} $<TARGET_FILE_DIR:${PROJECT_NAME}>/${SHADER_NAME}
+            COMMENT "Copying Metal shader ${SHADER_NAME} to build directory"
+        )
+    endforeach()
 endif()
 
 install(TARGETS ${PROJECT_NAME}

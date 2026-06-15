@@ -2,10 +2,29 @@
 #include "Mesh/iterators.h"
 #include "polyscope/slice_plane.h"
 #include "polyscope/types.h"
+#include <cmath>
+#include <limits>
 
 int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
   this->vertices.clear();
   this->faces.clear();
+  this->VertColors.clear();
+  this->FaceColors.clear();
+  this->VertBlockColors.clear();
+  this->FaceBlockColors.clear();
+  this->VertSweepBlock.clear();
+  this->FaceSweepBlock.clear();
+  this->label.clear();
+  this->FaceSweepTypes.clear();
+
+  auto blockColorAt = [&](int blockIdx) -> Eigen::Vector3f {
+    if (blockIdx >= 0 &&
+        blockIdx < static_cast<int>(this->blockColors.size())) {
+      return this->blockColors[static_cast<size_t>(blockIdx)];
+    }
+    return Eigen::Vector3f(0.5f, 0.5f, 0.5f);
+  };
+
   int id = 1;
   for (MeshLib::MeshVertexIterator mviter(mesh); !mviter.end(); mviter++) {
     MeshLib::CToolVertex *v =
@@ -18,8 +37,11 @@ int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
     point[1] = v->point()[1];
     point[2] = v->point()[2];
     this->vertices.push_back(point);
-    Eigen::Vector3f vc = Eigen::Vector3f(v->rgb()[0], v->rgb()[1], v->rgb()[2]);
+    int blockIdx = v->cflabel();
+    this->VertSweepBlock.push_back(blockIdx);
+    Eigen::Vector3f vc = blockColorAt(blockIdx);
     this->VertColors.push_back(vc);
+    this->VertBlockColors.push_back(vc);
     this->label.push_back(v->label());
   }
 
@@ -33,32 +55,13 @@ int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
       vid.push_back(fviter.value()->id() - 1);
     }
     this->faces.push_back(vid);
-    Eigen::Vector3f fc = Eigen::Vector3f(f->rgb()[0], f->rgb()[1], f->rgb()[2]);
+    int blockIdx = f->sweeplabel();
+    this->FaceSweepBlock.push_back(blockIdx);
+    Eigen::Vector3f fc = blockColorAt(blockIdx);
     this->FaceColors.push_back(fc);
+    this->FaceBlockColors.push_back(fc);
     int ft = f->sweepFaceType();
     this->FaceSweepTypes.push_back(ft);
-  }
-
-  int eid = 0;
-  for (MeshLib::MeshEdgeIterator meiter(mesh); !meiter.end(); ++meiter) {
-    MeshLib::CToolEdge *e = static_cast<MeshLib::CToolEdge *>(meiter.value());
-    if (e->sharp()) {
-      Eigen::Vector3f p1;
-      Eigen::Vector3f p2;
-      p1[0] = e->halfedge(0)->source()->point()[0];
-      p1[1] = e->halfedge(0)->source()->point()[1];
-      p1[2] = e->halfedge(0)->source()->point()[2];
-      p2[0] = e->halfedge(0)->target()->point()[0];
-      p2[1] = e->halfedge(0)->target()->point()[1];
-      p2[2] = e->halfedge(0)->target()->point()[2];
-      sharpPoints.push_back(p1);
-      sharpPoints.push_back(p2);
-      std::array<size_t, 2> edge;
-      edge[0] = 2 * eid;
-      edge[1] = 2 * eid + 1;
-      Curves.push_back(edge);
-      eid++;
-    }
   }
 
   return 0;
@@ -73,9 +76,17 @@ void MeshViewer::setGrid(
     std::vector<Eigen::Vector3f> SweepDir,
     std::vector<std::vector<std::vector<bool>>> ForbiddenBoundaryPoints,
     std::vector<std::vector<std::vector<float>>> GradianceDiff,
-    std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord) {
+    std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord,
+    const std::vector<bool> &hexIsNonPlanar,
+    const std::vector<Eigen::Vector3f> &blockColors,
+    const std::vector<int> &displayHexIndices,
+    const std::vector<std::string> &sweepEnergyNames) {
   this->CuttingHexLists = CuttingHexLists;
   this->SweepDir = SweepDir;
+  this->hexIsNonPlanar = hexIsNonPlanar;
+  this->blockColors = blockColors;
+  this->displayHexIndices = displayHexIndices;
+  this->sweepEnergyNames = sweepEnergyNames;
   this->bound_low = {Coord.front().front().front()[0],
                      Coord.front().front().front()[1],
                      Coord.front().front().front()[2]};
@@ -105,8 +116,14 @@ void MeshViewer::setGrid(
     for (size_t y = 0; y < this->dimY; ++y) {
       for (size_t x = 0; x < this->dimX; ++x) {
         this->scalarVals[index] = Field[x][y][z];
-        this->ForbiddenBoundaryPoints[index] =
-            ForbiddenBoundaryPoints[x][y][z] ? 1.0f : 0.0f;
+        bool forbidden = false;
+        if (!ForbiddenBoundaryPoints.empty() &&
+            x < ForbiddenBoundaryPoints.size() &&
+            y < ForbiddenBoundaryPoints[x].size() &&
+            z < ForbiddenBoundaryPoints[x][y].size()) {
+          forbidden = ForbiddenBoundaryPoints[x][y][z];
+        }
+        this->ForbiddenBoundaryPoints[index] = forbidden ? 1.0f : 0.0f;
         this->GradianceScalar[index] = GradianceCount[x][y][z];
         this->GradianceDiff[index] = GradianceDiff[x][y][z];
         for (int i = 0; i < SweepProjScalars.size(); i++) {
@@ -124,12 +141,14 @@ void MeshViewer::setGrid(
 
 int MeshViewer::show() {
   polyscope::init();
-  auto edge =
-      polyscope::registerCurveNetwork("Sharp Edges", sharpPoints, Curves);
   auto mesh = polyscope::registerSurfaceMesh("Mesh", vertices, faces);
-  mesh->addVertexColorQuantity("Sweep Dir", this->VertColors);
+  mesh->addVertexColorQuantity("Sweep Block Color", this->VertColors)
+      ->setEnabled(true);
+  mesh->addVertexScalarQuantity("Sweep Block", this->VertSweepBlock);
   mesh->addVertexScalarQuantity("Label", this->label);
-  mesh->addFaceColorQuantity("SweepDir", this->FaceColors);
+  mesh->addFaceColorQuantity("Sweep Block Color", this->FaceColors)
+      ->setEnabled(true);
+  mesh->addFaceScalarQuantity("Sweep Block", this->FaceSweepBlock);
   mesh->addFaceScalarQuantity("FaceSweepTypes", this->FaceSweepTypes);
   polyscope::VolumeGrid *psGrid = polyscope::registerVolumeGrid(
       "Field", {dimX, dimY, dimZ}, bound_low, bound_high);
@@ -149,77 +168,99 @@ int MeshViewer::show() {
                                   std::make_tuple(SweepProjScalars[i], nData));
   };
   for (int i = 0; i < SweepProjEnergies.size(); i++) {
-    std::string str = "Sweep Energy " + std::to_string(i);
-    psGrid
-        ->addNodeScalarQuantity(str,
-                                std::make_tuple(SweepProjEnergies[i], nData))
-        ->setColorMap("coolwarm");
+    std::string str = (i < static_cast<int>(this->sweepEnergyNames.size()) &&
+                       !this->sweepEnergyNames[static_cast<size_t>(i)].empty())
+                          ? this->sweepEnergyNames[static_cast<size_t>(i)]
+                          : "Sweep Energy " + std::to_string(i);
+    auto *eq = psGrid
+                   ->addNodeScalarQuantity(
+                       str, std::make_tuple(SweepProjEnergies[i], nData))
+                   ->setColorMap("coolwarm");
+    if (i == 0) {
+      eq->setEnabled(true);
+    }
   };
-  scalarQ->setEnabled(true);
+  scalarQ->setEnabled(false);
   // --- 绘制六面体 (Cutting Hexahedra) ---
   // 假设 CuttingHexLists 是 std::vector<std::map<int, Eigen::Vector3f>> 类型
   // 每个 map 包含 8 个角点 (索引 0 到 7)
 
-  int hex_id = 0;
-  for (const auto &hex_map : CuttingHexLists) {
-    // 1. 准备顶点坐标
-    // 转换为 polyscope 期望的 std::vector<glm::vec3> 格式
-    std::vector<glm::vec3> hex_vertices;
-    // 确保 map 中有 8 个点
+  auto blockColor = [&](int idx) -> glm::vec3 {
+    if (idx >= 0 && idx < static_cast<int>(blockColors.size())) {
+      const Eigen::Vector3f &c = blockColors[static_cast<size_t>(idx)];
+      return glm::vec3(c.x(), c.y(), c.z());
+    }
+    if (idx >= 0 && idx < static_cast<int>(SweepDir.size())) {
+      const Eigen::Vector3f &d = SweepDir[static_cast<size_t>(idx)];
+      return glm::vec3(std::abs(d.x()), std::abs(d.y()), std::abs(d.z()));
+    }
+    return glm::vec3(0.8f, 0.8f, 0.8f);
+  };
+
+  std::vector<std::array<size_t, 2>> hex_edges = {
+      {0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3},
+      {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7},
+  };
+
+  std::vector<int> hexIndices;
+  if (!displayHexIndices.empty()) {
+    hexIndices = displayHexIndices;
+  } else {
+    for (int i = 0; i < static_cast<int>(CuttingHexLists.size()); ++i) {
+      hexIndices.push_back(i);
+    }
+  }
+
+  int cylinderRegionId = 0;
+  for (int hex_id : hexIndices) {
+    if (hex_id < 0 || hex_id >= static_cast<int>(CuttingHexLists.size())) {
+      continue;
+    }
+    const auto &hex_map = CuttingHexLists[static_cast<size_t>(hex_id)];
     if (hex_map.size() != 8) {
       std::cerr << "Warning: Hexahedron " << hex_id
                 << " does not have 8 vertices. Skipping." << std::endl;
-      hex_id++;
       continue;
     }
 
-    // Polyscope 要求顶点坐标按索引顺序排列 (0 到 7)
+    std::vector<glm::vec3> hex_vertices;
+    hex_vertices.reserve(8);
     for (int i = 0; i < 8; ++i) {
-      // 从 Eigen::Vector3f 转换到 glm::vec3
       const Eigen::Vector3f &eigen_v = hex_map.at(i);
       hex_vertices.push_back(glm::vec3(eigen_v.x(), eigen_v.y(), eigen_v.z()));
     }
 
-    // 2. 定义六面体的 12 条边
-    // 边的索引对 (连接 hex_vertices 中的索引)
-    // 假设标准的六面体顶点索引顺序如下：
-    /*
-        4-------7 (z max)
-       /|      /|
-      5-------6 |
-      | 0-----|-3 (z min)
-      |/      |/
-      1-------2
-    */
-    std::vector<std::array<size_t, 2>> hex_edges = {
-        // Z-edges (MinZ <-> MaxZ): (X, Y 固定)
-        {0, 1}, // MinX, MinY: (000 <-> 001)
-        {2, 3}, // MinX, MaxY: (010 <-> 011)
-        {4, 5}, // MaxX, MinY: (100 <-> 101)
-        {6, 7}, // MaxX, MaxY: (110 <-> 111)
+    bool isNonPlanar =
+        hex_id < static_cast<int>(hexIsNonPlanar.size()) &&
+        hexIsNonPlanar[static_cast<size_t>(hex_id)];
+    std::string hexName =
+        isNonPlanar
+            ? "Cylinder Sweep Region " + std::to_string(cylinderRegionId++)
+            : "Vertical Sweep Region";
 
-        // Y-edges (MinY <-> MaxY): (X, Z 固定)
-        {0, 2}, // MinX, MinZ: (000 <-> 010)
-        {1, 3}, // MinX, MaxZ: (001 <-> 011)
-        {4, 6}, // MaxX, MinZ: (100 <-> 110)
-        {5, 7}, // MaxX, MaxZ: (101 <-> 111)
+    float minEdge = std::numeric_limits<float>::max();
+    for (size_t ei = 0; ei < hex_edges.size(); ++ei) {
+      const glm::vec3 &a = hex_vertices[hex_edges[ei][0]];
+      const glm::vec3 &b = hex_vertices[hex_edges[ei][1]];
+      minEdge = std::min(minEdge, glm::length(b - a));
+    }
+    if (minEdge < 1e-5f) {
+      std::cerr << "Warning: " << hexName << " has degenerate edges (min="
+                << minEdge << ").\n";
+    }
 
-        // X-edges (MinX <-> MaxX): (Y, Z 固定)
-        {0, 4}, // MinY, MinZ: (000 <-> 100)
-        {1, 5}, // MinY, MaxZ: (001 <-> 101)
-        {2, 6}, // MaxY, MinZ: (010 <-> 110)
-        {3, 7}  // MaxY, MaxZ: (011 <-> 111)
-    };
-    // 3. 注册为曲线网络
-    std::string name = "Cutting Hex " + std::to_string(hex_id);
-
-    auto cn = polyscope::registerCurveNetwork(name, hex_vertices, hex_edges)
-                  ->setColor(glm::vec3{abs(this->SweepDir[hex_id][0]),
-                                       abs(this->SweepDir[hex_id][1]),
-                                       abs(this->SweepDir[hex_id][2])});
-    cn->setEnabled(false);
-    hex_id++;
+    auto cn = polyscope::registerCurveNetwork(hexName, hex_vertices, hex_edges);
+    glm::vec3 wireColor = blockColor(hex_id);
+    if (isNonPlanar) {
+      wireColor = glm::vec3(1.0f, 0.95f, 0.2f);
+    }
+    cn->setColor(wireColor);
+    cn->setEnabled(true);
+    if (isNonPlanar) {
+      cylinderRegionId++;
+    }
   }
+
   polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
 
   polyscope::view::upDir = polyscope::UpDir::NegZUp;

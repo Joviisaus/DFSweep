@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#ifdef ENABLE_OMP
 #include <omp.h>
+#endif
 #include <unordered_map>
 
 class OctreeNode {

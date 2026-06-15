@@ -39,9 +39,10 @@ void CuttingBox::PrecomputeForbiddenPoints() {
   for (int x = 0; x < D1; ++x) {
     for (int y = 0; y < D2; ++y) {
       for (int z = 0; z < D3; ++z) {
-        if (this->FieldLabel[x][y][z] < -1)
+        int fl = this->FieldLabel[x][y][z];
+        if (fl < 0 || fl >= (int)this->primes.size())
           continue;
-        if (!(this->primes[this->FieldLabel[x][y][z]].isPlane) &&
+        if (!this->primes[static_cast<size_t>(fl)].isPlane &&
             std::abs(this->Field[x][y][z]) < FIELD_THRESHOLD) {
           this->ForbiddenBoundaryPoints[x][y][z] = true;
         }

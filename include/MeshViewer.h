@@ -23,7 +23,11 @@ public:
       std::vector<Eigen::Vector3f> SweepDir,
       std::vector<std::vector<std::vector<bool>>> ForbiddenBoundaryPoints,
       std::vector<std::vector<std::vector<float>>> GradianceDiff,
-      std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord);
+      std::vector<std::vector<std::vector<Eigen::Vector3f>>> Coord,
+      const std::vector<bool> &hexIsNonPlanar = {},
+      const std::vector<Eigen::Vector3f> &blockColors = {},
+      const std::vector<int> &displayHexIndices = {},
+      const std::vector<std::string> &sweepEnergyNames = {});
 
 protected:
   MeshLib::CTMesh *mesh;
@@ -39,13 +43,19 @@ protected:
   float *ForbiddenBoundaryPoints;
   int *GradianceScalar;
   std::vector<float *> SweepProjScalars;
-  std::vector<Eigen::Vector3f> sharpPoints;
-  std::vector<std::array<size_t, 2>> Curves;
   std::vector<float *> SweepProjEnergies;
+  std::vector<std::string> sweepEnergyNames;
   std::vector<std::map<int, Eigen::Vector3f>> CuttingHexLists;
+  std::vector<bool> hexIsNonPlanar;
+  std::vector<int> displayHexIndices;
+  std::vector<Eigen::Vector3f> blockColors;
   std::vector<std::vector<float>> vertices;
   std::vector<Eigen::Vector3f> VertColors;
   std::vector<Eigen::Vector3f> FaceColors;
+  std::vector<Eigen::Vector3f> VertBlockColors;
+  std::vector<Eigen::Vector3f> FaceBlockColors;
+  std::vector<int> VertSweepBlock;
+  std::vector<int> FaceSweepBlock;
   std::vector<int> FaceSweepTypes;
   std::vector<std::vector<int>> faces;
 };

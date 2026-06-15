@@ -1,14 +1,23 @@
 #include "DFContainer.h"
 #include "CTMesh.h"
 #include "ColorImplementer.h"
+#include "SweepBlock.h"
 #include "SweepDirDetector.h"
 #include "SweepDirFilter.h"
 #include "SweepDirSpliter.h"
 #include <Eigen/src/Core/Matrix.h>
 #include <cmath>
+#include <cstdint>
+#include <limits>
+#include <map>
+#include <unordered_map>
 
 #ifdef ENABLE_CUDA
 #include "DistanceFieldCUDA.cuh"
+#endif
+
+#ifdef ENABLE_METAL
+#include "MetalNearestPoint.h"
 #endif
 
 DistanceField::DistanceField() { this->primes.clear(); };
@@ -69,6 +78,8 @@ void DistanceField::exportPlanesToFile(const std::string &filename) {
 void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
   this->mesh = mesh;
   this->PointList.clear();
+  this->PointIDList.clear();
+  this->VertexPtrList.clear();
   for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); mfiter++) {
     MeshLib::CToolFace *face =
         static_cast<MeshLib::CToolFace *>(mfiter.value());
@@ -81,17 +92,18 @@ void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
     face->normal() = normal / face->area();
   }
   for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
-    static_cast<MeshLib::CToolVertex *>(viter.value())->FeaturePoint() = false;
+    MeshLib::CToolVertex *tv =
+        static_cast<MeshLib::CToolVertex *>(viter.value());
+    tv->FeaturePoint() = false;
     std::vector<float> pointcoord;
-    pointcoord.clear();
     pointcoord.push_back(viter.value()->point()[0]);
     pointcoord.push_back(viter.value()->point()[1]);
     pointcoord.push_back(viter.value()->point()[2]);
     this->PointList.push_back(pointcoord);
     this->PointIDList.push_back(viter.value()->id());
+    this->VertexPtrList.push_back(tv);
     Eigen::Vector3f normal = Eigen::Vector3f(0.0, 0.0, 0.0);
     MeshLib::CTMesh::CVertex *v = *viter;
-    int labelcount = 0;
     int label = -2;
     for (MeshLib::CTMesh::VertexFaceIterator vfiter(v); !vfiter.end();
          vfiter++) {
@@ -105,8 +117,7 @@ void DistanceField::SetMesh(MeshLib::CTMesh *mesh) {
       if (label == -2)
         label = facelabel;
       else if (label != facelabel)
-        static_cast<MeshLib::CToolVertex *>(viter.value())->FeaturePoint() =
-            true;
+        tv->FeaturePoint() = true;
     }
     normal.normalize();
     v->normal()[0] = normal[0];
@@ -283,27 +294,39 @@ void DistanceField::SubdivideNode(std::shared_ptr<OctreeNode> node) {
   }
 }
 
-void DistanceField::FindNearestPointsInOctree(
+int DistanceField::FindNearestPointInOctree(
     const Eigen::Vector3f &point, std::shared_ptr<OctreeNode> node,
-    std::vector<int> &candidateIndices) {
+    float &bestDist) {
   if (!node)
-    return;
+    return -1;
 
   Eigen::Vector3f diff = (point - node->center).cwiseAbs();
   float distToNode =
       (diff - Eigen::Vector3f::Constant(node->halfSize)).cwiseMax(0.0f).norm();
 
+  if (distToNode > bestDist)
+    return -1;
+
+  int bestIdx = -1;
+
   if (node->isLeaf) {
-    candidateIndices.insert(candidateIndices.end(), node->pointIndices.begin(),
-                            node->pointIndices.end());
-    return;
+    for (int idx : node->pointIndices) {
+      const auto &p = PointList[idx];
+      float d = (point - Eigen::Vector3f(p[0], p[1], p[2])).norm();
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = idx;
+      }
+    }
+    return bestIdx;
   }
 
   for (const auto &child : node->children) {
-    if (child) {
-      FindNearestPointsInOctree(point, child, candidateIndices);
-    }
+    int found = FindNearestPointInOctree(point, child, bestDist);
+    if (found >= 0)
+      bestIdx = found;
   }
+  return bestIdx;
 }
 
 Eigen::Vector3f DistanceField::ClosestPointOnTriangle(
@@ -387,125 +410,124 @@ float DistanceField::PointToTriangleDistance(const Eigen::Vector3f &point,
   return (point - closestPoint).norm();
 }
 
-Eigen::Vector4f DistanceField::DistanceToMesh(int x, int y, int z) {
-  Eigen::Vector3f point = this->Coord[x][y][z];
+Eigen::Vector4f DistanceField::ComputeVertexDistance(
+    const Eigen::Vector3f &point, MeshLib::CToolVertex *nearestVertex,
+    int x, int y, int z) {
   Eigen::Vector4f DistanceVector;
-  if (!mesh || PointList.empty()) {
-    DistanceVector.setZero();
+  DistanceVector.setZero();
+  if (!nearestVertex)
     return DistanceVector;
-  }
 
-  std::vector<int> candidateIndices;
-  FindNearestPointsInOctree(point, octreeRoot, candidateIndices);
-
-  if (candidateIndices.empty()) {
-    DistanceVector.setZero();
-    return DistanceVector;
-  }
-  std::vector<float> nearestPoint;
-  nearestPoint.resize(3);
-  float minDistance = std::numeric_limits<float>::max();
-  for (int idx : candidateIndices) {
-    const auto &meshPoint = PointList[idx];
-    Eigen::Vector3f p(meshPoint[0], meshPoint[1], meshPoint[2]);
-    float dist = (point - p).norm();
-    if (dist < minDistance) {
-      nearestPoint[0] = p[0];
-      nearestPoint[1] = p[1];
-      nearestPoint[2] = p[2];
-      minDistance = dist;
-    }
-  }
+  float minDistance =
+      (point - Eigen::Vector3f(nearestVertex->point()[0],
+                               nearestVertex->point()[1],
+                               nearestVertex->point()[2]))
+          .norm();
 
   if (!this->primes.empty()) {
-    for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
-      MeshLib::CToolVertex *v =
-          static_cast<MeshLib::CToolVertex *>(viter.value());
-      if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
-          abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
-          abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
-        bool FeaturePoint = false;
-        for (MeshLib::CTMesh::VertexVertexIterator vviter(v); !vviter.end();
-             ++vviter) {
-          if (static_cast<MeshLib::CToolVertex *>(vviter.value())->label() !=
-              v->label()) {
-            FeaturePoint = true;
-            break;
-          }
-        }
-        if (FeaturePoint) {
-          Eigen::Vector3f pointOnMesh =
-              Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
-          Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
-          Eigen::Vector3f NormalOnMesh =
-              Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
-          NormalOnMesh.normalize();
-
-          if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
-            minDistance = -abs(minDistance);
-          else
-            minDistance = abs(minDistance);
-
-          DistanceVector[0] = 0;
-          DistanceVector[1] = 0;
-          DistanceVector[2] = 0;
-          DistanceVector[3] = minDistance;
-          this->FieldLabel[x][y][z] = -1;
-
-          break;
-        }
-        minDistance = this->DisCompute(point, v->label());
-
-        this->FieldLabel[x][y][z] = v->label();
-        Eigen::Vector3f VertexNormal =
-            Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
-        Eigen::Vector3f vertexPoint =
-            Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
-        if ((vertexPoint - point).dot(VertexNormal) < 0) {
-          DistanceVector[0] = -v->normal()[0];
-          DistanceVector[1] = -v->normal()[1];
-          DistanceVector[2] = -v->normal()[2];
-          DistanceVector[3] = -minDistance;
-        } else {
-          DistanceVector[0] = v->normal()[0];
-          DistanceVector[1] = v->normal()[1];
-          DistanceVector[2] = v->normal()[2];
-          DistanceVector[3] = minDistance;
-        }
-        break;
+    bool isFeature = nearestVertex->FeaturePoint();
+    if (isFeature) {
+      Eigen::Vector3f pointOnMesh(nearestVertex->point()[0],
+                                  nearestVertex->point()[1],
+                                  nearestVertex->point()[2]);
+      Eigen::Vector3f NormalOnMesh(nearestVertex->normal()[0],
+                                   nearestVertex->normal()[1],
+                                   nearestVertex->normal()[2]);
+      NormalOnMesh.normalize();
+      if ((pointOnMesh - point).dot(NormalOnMesh) < 0)
+        minDistance = -abs(minDistance);
+      else
+        minDistance = abs(minDistance);
+      DistanceVector[0] = 0;
+      DistanceVector[1] = 0;
+      DistanceVector[2] = 0;
+      DistanceVector[3] = minDistance;
+      this->FieldLabel[x][y][z] = -1;
+    } else {
+      minDistance = this->DisCompute(point, nearestVertex->label());
+      this->FieldLabel[x][y][z] = nearestVertex->label();
+      Eigen::Vector3f VertexNormal(nearestVertex->normal()[0],
+                                   nearestVertex->normal()[1],
+                                   nearestVertex->normal()[2]);
+      Eigen::Vector3f vertexPoint(nearestVertex->point()[0],
+                                  nearestVertex->point()[1],
+                                  nearestVertex->point()[2]);
+      if ((vertexPoint - point).dot(VertexNormal) < 0) {
+        DistanceVector[0] = -nearestVertex->normal()[0];
+        DistanceVector[1] = -nearestVertex->normal()[1];
+        DistanceVector[2] = -nearestVertex->normal()[2];
+        DistanceVector[3] = -minDistance;
+      } else {
+        DistanceVector[0] = nearestVertex->normal()[0];
+        DistanceVector[1] = nearestVertex->normal()[1];
+        DistanceVector[2] = nearestVertex->normal()[2];
+        DistanceVector[3] = minDistance;
       }
     }
   } else {
-    for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
-      MeshLib::CToolVertex *v =
-          static_cast<MeshLib::CToolVertex *>(viter.value());
-      if (abs(v->point()[0] - nearestPoint[0]) < 1e-16 &&
-          abs(v->point()[1] - nearestPoint[1]) < 1e-16 &&
-          abs(v->point()[2] - nearestPoint[2]) < 1e-16) {
-        Eigen::Vector3f pointOnMesh =
-            Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
-        Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
-        Eigen::Vector3f NormalOnMesh =
-            Eigen::Vector3f(v->normal()[0], v->normal()[1], v->normal()[2]);
-
-        if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
-          minDistance = -minDistance;
-        DistanceVector[0] = v->normal()[0];
-        DistanceVector[1] = v->normal()[1];
-        DistanceVector[2] = v->normal()[2];
-        DistanceVector[3] = minDistance;
-        break;
-      }
-    }
+    Eigen::Vector3f pointOnMesh(nearestVertex->point()[0],
+                                nearestVertex->point()[1],
+                                nearestVertex->point()[2]);
+    Eigen::Vector3f NormalOnMesh(nearestVertex->normal()[0],
+                                 nearestVertex->normal()[1],
+                                 nearestVertex->normal()[2]);
+    if ((pointOnMesh - point).dot(NormalOnMesh) < 0)
+      minDistance = -minDistance;
+    DistanceVector[0] = nearestVertex->normal()[0];
+    DistanceVector[1] = nearestVertex->normal()[1];
+    DistanceVector[2] = nearestVertex->normal()[2];
+    DistanceVector[3] = minDistance;
   }
-
   return DistanceVector;
 }
 
-double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
-  auto &m_params = this->primes[label].params;
+bool DistanceField::HasNonPlanarPrimes() const {
+  for (const auto &p : this->primes) {
+    if (p.params.size() >= 10 && !p.isPlane) {
+      return true;
+    }
+  }
+  return false;
+}
 
-  if (this->primes[label].isPlane) {
+bool DistanceField::PrimeLabelValid(int label) const {
+  return label >= 0 && label < static_cast<int>(this->primes.size());
+}
+
+const PrimeData *DistanceField::GetPrimeByLabel(int label) const {
+  if (!PrimeLabelValid(label)) {
+    return nullptr;
+  }
+  return &this->primes[label];
+}
+
+void DistanceField::ReindexPrimesById() {
+  if (this->primes.empty()) {
+    return;
+  }
+
+  int maxId = 0;
+  for (const auto &p : this->primes) {
+    maxId = std::max(maxId, p.id);
+  }
+
+  std::vector<PrimeData> byId(static_cast<size_t>(maxId) + 1);
+  for (const auto &p : this->primes) {
+    if (p.id >= 0 && p.id <= maxId) {
+      byId[static_cast<size_t>(p.id)] = p;
+    }
+  }
+  this->primes = std::move(byId);
+}
+
+double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
+  const PrimeData *prime = GetPrimeByLabel(label);
+  if (!prime) {
+    return std::numeric_limits<double>::infinity();
+  }
+  auto &m_params = prime->params;
+
+  if (prime->isPlane) {
     double a = m_params[1], b = m_params[2], c = m_params[3], d = m_params[0];
     double norm = sqrt(a * a + b * b + c * c);
 
@@ -565,6 +587,49 @@ double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
   return (q - point).norm();
 };
 
+void ComputeNearestPointsCPU(
+    const std::vector<std::vector<std::vector<Eigen::Vector3f>>> &Coord,
+    const std::vector<std::vector<float>> &PointList,
+    std::vector<std::vector<std::vector<int>>> &NearestIndex) {
+  int xSize = (int)Coord.size();
+  if (xSize == 0)
+    return;
+  int ySize = (int)Coord[0].size();
+  int zSize = (int)Coord[0][0].size();
+  int numPoints = (int)PointList.size();
+
+  NearestIndex.resize(xSize);
+  for (int i = 0; i < xSize; ++i) {
+    NearestIndex[i].resize(ySize);
+    for (int j = 0; j < ySize; ++j)
+      NearestIndex[i][j].resize(zSize, -1);
+  }
+
+#ifdef ENABLE_OMP
+#pragma omp parallel for collapse(3)
+#endif
+  for (int i = 0; i < xSize; ++i) {
+    for (int j = 0; j < ySize; ++j) {
+      for (int k = 0; k < zSize; ++k) {
+        const Eigen::Vector3f &query = Coord[i][j][k];
+        float bestDist = std::numeric_limits<float>::max();
+        int bestIdx = -1;
+        for (int p = 0; p < numPoints; ++p) {
+          float dx = query.x() - PointList[p][0];
+          float dy = query.y() - PointList[p][1];
+          float dz = query.z() - PointList[p][2];
+          float d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 < bestDist) {
+            bestDist = d2;
+            bestIdx = p;
+          }
+        }
+        NearestIndex[i][j][k] = bestIdx;
+      }
+    }
+  }
+}
+
 void DistanceField::ComputeDistanceField() {
   if (PointList.empty() || Field.empty() || Coord.empty()) {
     return;
@@ -587,124 +652,30 @@ void DistanceField::ComputeDistanceField() {
     }
   }
 
-#ifdef ENABLE_CUDA
   std::vector<std::vector<std::vector<int>>> NearestPoint;
+
+#ifdef ENABLE_CUDA
+  std::cout << "Using CUDA for nearest point computation..." << std::endl;
   ComputeNearestPointsCUDA(this->Coord, this->PointList, NearestPoint);
-
-  std::vector<std::vector<std::vector<Eigen::Vector4f>>> DistanceScalar;
-
-  DistanceScalar.resize(xSize);
-  for (int i = 0; i < xSize; ++i) {
-    DistanceScalar[i].resize(ySize);
-    for (int j = 0; j < ySize; ++j) {
-      DistanceScalar[i][j].resize(zSize);
-    }
-  }
+#elif defined(ENABLE_METAL)
+  std::cout << "Using Metal GPU for nearest point computation..." << std::endl;
+  ComputeNearestPointsMetal(this->Coord, this->PointList, NearestPoint);
+#else
+  std::cout << "Using CPU for nearest point computation..." << std::endl;
+  ComputeNearestPointsCPU(this->Coord, this->PointList, NearestPoint);
+#endif
 
 #ifdef ENABLE_OMP
 #pragma omp parallel for collapse(3)
-#endif // ENABLE_OMP
-  for (int x = 0; x < xSize; ++x) {
-    for (int y = 0; y < ySize; ++y) {
-      for (int z = 0; z < zSize; ++z) {
-        Eigen::Vector3f point = this->Coord[x][y][z];
-        Eigen::Vector4f DistanceVector;
-        DistanceVector.setZero();
-
-        std::vector<float> nearestPoint;
-        nearestPoint.resize(3);
-        int vid = this->PointIDList[NearestPoint[x][y][z]];
-        auto nearestVertex =
-            static_cast<MeshLib::CToolVertex *>(this->mesh->idVertex(vid));
-        nearestPoint[0] = nearestVertex->point()[0];
-        nearestPoint[1] = nearestVertex->point()[1];
-        nearestPoint[2] = nearestVertex->point()[2];
-
-        float minDistance =
-            (point -
-             Eigen::Vector3f(nearestPoint[0], nearestPoint[1], nearestPoint[2]))
-                .norm();
-        if (!this->primes.empty()) {
-          bool FeaturePoint = nearestVertex->FeaturePoint();
-          if (FeaturePoint) {
-            Eigen::Vector3f pointOnMesh = Eigen::Vector3f(
-                nearestVertex->point()[0], nearestVertex->point()[1],
-                nearestVertex->point()[2]);
-            Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
-            Eigen::Vector3f NormalOnMesh = Eigen::Vector3f(
-                nearestVertex->normal()[0], nearestVertex->normal()[1],
-                nearestVertex->normal()[2]);
-            NormalOnMesh.normalize();
-
-            if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
-              minDistance = -abs(minDistance);
-            else
-              minDistance = abs(minDistance);
-            DistanceVector[0] = 0;
-            DistanceVector[1] = 0;
-            DistanceVector[2] = 0;
-            DistanceVector[3] = minDistance;
-            this->FieldLabel[x][y][z] = -1;
-
-          } else {
-            minDistance = this->DisCompute(point, nearestVertex->label());
-            this->FieldLabel[x][y][z] = nearestVertex->label();
-            Eigen::Vector3f VertexNormal = Eigen::Vector3f(
-                nearestVertex->normal()[0], nearestVertex->normal()[1],
-                nearestVertex->normal()[2]);
-            Eigen::Vector3f vertexPoint = Eigen::Vector3f(
-                nearestVertex->point()[0], nearestVertex->point()[1],
-                nearestVertex->point()[2]);
-            if ((vertexPoint - point).dot(VertexNormal) < 0) {
-              DistanceVector[0] = -nearestVertex->normal()[0];
-              DistanceVector[1] = -nearestVertex->normal()[1];
-              DistanceVector[2] = -nearestVertex->normal()[2];
-              DistanceVector[3] = -minDistance;
-            } else {
-              DistanceVector[0] = nearestVertex->normal()[0];
-              DistanceVector[1] = nearestVertex->normal()[1];
-              DistanceVector[2] = nearestVertex->normal()[2];
-              DistanceVector[3] = minDistance;
-            }
-          }
-        } else {
-          Eigen::Vector3f pointOnMesh = Eigen::Vector3f(
-              nearestVertex->point()[0], nearestVertex->point()[1],
-              nearestVertex->point()[2]);
-          Eigen::Vector3f pointOnGrid = this->Coord[x][y][z];
-          Eigen::Vector3f NormalOnMesh = Eigen::Vector3f(
-              nearestVertex->normal()[0], nearestVertex->normal()[1],
-              nearestVertex->normal()[2]);
-
-          if ((pointOnMesh - pointOnGrid).dot(NormalOnMesh) < 0)
-            minDistance = -minDistance;
-          DistanceVector[0] = nearestVertex->normal()[0];
-          DistanceVector[1] = nearestVertex->normal()[1];
-          DistanceVector[2] = nearestVertex->normal()[2];
-          DistanceVector[3] = minDistance;
-        }
-
-        DistanceScalar[x][y][z] = DistanceVector;
-      }
-    }
-  }
-
-#else
-  BuildOctree();
 #endif
-
-#ifdef ENABLE_OMP
-// #pragma omp parallel for collapse(3)
-#endif // ENABLE_OMP
   for (int i = 0; i < xSize; ++i) {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
-
-#ifdef ENABLE_CUDA
-        Eigen::Vector4f distance = DistanceScalar[i][j][k];
-#else
-        Eigen::Vector4f distance = DistanceToMesh(i, j, k);
-#endif
+        Eigen::Vector3f point = this->Coord[i][j][k];
+        MeshLib::CToolVertex *nearestVertex =
+            this->VertexPtrList[NearestPoint[i][j][k]];
+        Eigen::Vector4f distance =
+            ComputeVertexDistance(point, nearestVertex, i, j, k);
         GradianceField[i][j][k] = distance.head(3);
         Field[i][j][k] = distance[3];
       }
@@ -826,87 +797,588 @@ void DistanceField::ComputeDistanceField() {
       }
     }
   }
-  if (this->primes.size() != 0)
-    this->SweepProjection_Regist();
+
+  InitForbiddenBoundaryPoints();
+}
+
+void DistanceField::InitForbiddenBoundaryPoints() {
+  if (Field.empty() || FieldLabel.empty()) {
+    return;
+  }
+
+  int D1 = static_cast<int>(Field.size());
+  int D2 = static_cast<int>(Field[0].size());
+  int D3 = static_cast<int>(Field[0][0].size());
+  float patch = (Coord[0][0][0] - Coord[0][0][1]).norm();
+  const float fieldThreshold = patch;
+
+  ForbiddenBoundaryPoints.assign(
+      D1, std::vector<std::vector<bool>>(D2, std::vector<bool>(D3, false)));
+
+  for (int x = 0; x < D1; ++x) {
+    for (int y = 0; y < D2; ++y) {
+      for (int z = 0; z < D3; ++z) {
+        int fl = FieldLabel[x][y][z];
+        if (fl < 0 || fl >= static_cast<int>(primes.size())) {
+          continue;
+        }
+        if (!primes[static_cast<size_t>(fl)].isPlane &&
+            std::abs(Field[x][y][z]) < fieldThreshold) {
+          ForbiddenBoundaryPoints[x][y][z] = true;
+        }
+      }
+    }
+  }
+}
+
+Eigen::Vector3f DistanceField::RandomSweepColor(int seed) {
+  auto hue01 = [](int s, int salt) -> float {
+    uint32_t x = static_cast<uint32_t>(s * 374761393 + salt * 668265263);
+    x = (x ^ (x >> 13)) * 1274126177u;
+    x ^= x >> 16;
+    return static_cast<float>(x % 1000) / 1000.0f;
+  };
+
+  float h = hue01(seed, 17);
+  float s = 0.55f + 0.35f * hue01(seed, 29);
+  float v = 0.75f + 0.2f * hue01(seed, 41);
+  int hi = static_cast<int>(h * 6.0f) % 6;
+  float f = h * 6.0f - static_cast<float>(hi);
+  float p = v * (1.0f - s);
+  float q = v * (1.0f - f * s);
+  float t = v * (1.0f - (1.0f - f) * s);
+  switch (hi) {
+  case 0:
+    return Eigen::Vector3f(v, t, p);
+  case 1:
+    return Eigen::Vector3f(q, v, p);
+  case 2:
+    return Eigen::Vector3f(p, v, t);
+  case 3:
+    return Eigen::Vector3f(p, q, v);
+  case 4:
+    return Eigen::Vector3f(t, p, v);
+  default:
+    return Eigen::Vector3f(v, p, q);
+  }
+}
+
+void DistanceField::EnsureSweepBlockColors() {
+  while (sweepBlockColors.size() < CuttingHexLists.size()) {
+    sweepBlockColors.push_back(
+        RandomSweepColor(static_cast<int>(sweepBlockColors.size())));
+  }
+  while (sweepBlockNonPlanar.size() < CuttingHexLists.size()) {
+    sweepBlockNonPlanar.push_back(false);
+  }
+}
+
+namespace {
+
+Eigen::Vector3f RadialFromAxis(const Eigen::Vector3f &p,
+                               const Eigen::Vector3f &origin,
+                               const Eigen::Vector3f &axis) {
+  Eigen::Vector3f rel = p - origin;
+  return rel - rel.dot(axis) * axis;
+}
+
+} // namespace
+
+int DistanceField::HexIndexToSweepBlockIndex(int hexIdx) const {
+  if (hexIdx < 0) {
+    return -1;
+  }
+  int planarHexCount = static_cast<int>(CuttingHexLists.size()) -
+                       static_cast<int>(sweepBlocks.size());
+  if (hexIdx < planarHexCount) {
+    return -1;
+  }
+  int sweepIdx = hexIdx - planarHexCount;
+  if (sweepIdx >= static_cast<int>(sweepBlocks.size())) {
+    return -1;
+  }
+  return sweepIdx;
+}
+
+bool DistanceField::IsPointInCylinderSweepBlock(
+    int hexIdx, const Eigen::Vector3f &position) const {
+  int sweepIdx = HexIndexToSweepBlockIndex(hexIdx);
+  if (sweepIdx < 0) {
+    return false;
+  }
+  const SweepBlockRegion &block = sweepBlocks[static_cast<size_t>(sweepIdx)];
+  if (block.kind != SweepKind::CylindricalBase) {
+    return false;
+  }
+  Eigen::Vector3f axis = block.sweepAxis.normalized();
+  float ax = (position - block.sweepOrigin).dot(axis);
+  if (ax < block.axialLower || ax > block.axialUpper) {
+    return false;
+  }
+  float radial = RadialFromAxis(position, block.sweepOrigin, axis).norm();
+  const float margin = std::max(STEP_SIZE * 0.5f, 1e-3f);
+  return radial >= block.radialInner - margin &&
+         radial <= block.radialOuter + margin;
+}
+
+int DistanceField::SweepBlockToHexIndex(int sweepBlockIdx) const {
+  if (sweepBlockIdx < 0) {
+    return -1;
+  }
+  int planarHexCount = static_cast<int>(CuttingHexLists.size()) -
+                       static_cast<int>(sweepBlocks.size());
+  if (planarHexCount < 0) {
+    return -1;
+  }
+  int hexIdx = planarHexCount + sweepBlockIdx;
+  if (hexIdx >= static_cast<int>(CuttingHexLists.size())) {
+    return -1;
+  }
+  return hexIdx;
+}
+
+float DistanceField::CuttingHexVolume(
+    const std::map<int, Eigen::Vector3f> &verticesMap) {
+  if (verticesMap.size() != 8) {
+    return std::numeric_limits<float>::max();
+  }
+  const Eigen::Vector3f &v0 = verticesMap.at(0);
+  const Eigen::Vector3f &v1 = verticesMap.at(1);
+  const Eigen::Vector3f &v2 = verticesMap.at(2);
+  const Eigen::Vector3f &v4 = verticesMap.at(4);
+  float vol = std::abs((v4 - v0).dot((v2 - v0).cross(v1 - v0)));
+  return vol > 1e-12f ? vol : std::numeric_limits<float>::max();
+}
+
+int DistanceField::FindBasePlanarHexIndex() const {
+  if (CuttingHexLists.empty()) {
+    return -1;
+  }
+
+  Eigen::Vector3f baseCen = Eigen::Vector3f::Zero();
+  bool foundBase = false;
+  if (mesh) {
+    for (const auto &prime : primes) {
+      if (!prime.isPlane) {
+        continue;
+      }
+      Eigen::Vector3f cen = Eigen::Vector3f::Zero();
+      int count = 0;
+      for (MeshLib::MeshVertexIterator viter(mesh); !viter.end(); ++viter) {
+        auto *v = static_cast<MeshLib::CToolVertex *>(viter.value());
+        if (v->label() != prime.id) {
+          continue;
+        }
+        cen += Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
+        count++;
+      }
+      if (count == 0) {
+        continue;
+      }
+      cen /= static_cast<float>(count);
+      if (!foundBase || cen.z() < baseCen.z()) {
+        baseCen = cen;
+        foundBase = true;
+      }
+    }
+  }
+
+  if (foundBase) {
+    for (int i = 0; i < static_cast<int>(CuttingHexLists.size()); ++i) {
+      if (i < static_cast<int>(sweepBlockNonPlanar.size()) &&
+          sweepBlockNonPlanar[static_cast<size_t>(i)]) {
+        continue;
+      }
+      if (CuttingHexLists[static_cast<size_t>(i)].size() != 8) {
+        continue;
+      }
+      if (insideCuttingBox(baseCen, CuttingHexLists[static_cast<size_t>(i)])) {
+        return i;
+      }
+    }
+  }
+
+  for (int i = 0; i < static_cast<int>(CuttingHexLists.size()); ++i) {
+    if (i < static_cast<int>(sweepBlockNonPlanar.size()) &&
+        sweepBlockNonPlanar[static_cast<size_t>(i)]) {
+      continue;
+    }
+    if (CuttingHexLists[static_cast<size_t>(i)].size() == 8) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+std::vector<int> DistanceField::getDisplayHexIndices() const {
+  std::vector<int> indices;
+  int baseHex = FindBasePlanarHexIndex();
+  if (baseHex >= 0) {
+    indices.push_back(baseHex);
+  }
+  for (int i = 0; i < static_cast<int>(CuttingHexLists.size()); ++i) {
+    if (i < static_cast<int>(sweepBlockNonPlanar.size()) &&
+        sweepBlockNonPlanar[static_cast<size_t>(i)]) {
+      indices.push_back(i);
+    }
+  }
+  return indices;
+}
+
+int DistanceField::FindSweepBlockForPrimeLabel(int primeLabel) const {
+  if (primeLabel < 0) {
+    return -1;
+  }
+  for (int i = 0; i < static_cast<int>(sweepBlocks.size()); ++i) {
+    const SweepBlockRegion &block = sweepBlocks[static_cast<size_t>(i)];
+    for (int memberId : block.memberPrimeIds) {
+      if (memberId == primeLabel) {
+        return SweepBlockToHexIndex(i);
+      }
+    }
+  }
+  for (int i = 0; i < static_cast<int>(sweepBlocks.size()); ++i) {
+    if (sweepBlocks[static_cast<size_t>(i)].primeId == primeLabel) {
+      return SweepBlockToHexIndex(i);
+    }
+  }
+  return -1;
+}
+
+int DistanceField::FindSweepBlockForFace(
+    const Eigen::Vector3f &position,
+    const std::unordered_map<int, int> &labelVotes) const {
+  // 距离场体素归属优先（两扫掠体的分割完全由距离场决定）
+  int voxelBlock = FindSweepBlockForPoint(position);
+  if (voxelBlock >= 0) {
+    return voxelBlock;
+  }
+
+  int blockIdx = -1;
+  int bestVotes = 0;
+  for (const auto &[lbl, votes] : labelVotes) {
+    int candidate = FindSweepBlockForPrimeLabel(lbl);
+    if (candidate >= 0 && votes > bestVotes) {
+      blockIdx = candidate;
+      bestVotes = votes;
+    }
+  }
+  return blockIdx;
+}
+
+int DistanceField::FindSweepBlockForPoint(const Eigen::Vector3f &position) const {
+  // 优先使用距离场体素归属（两扫掠体管线）
+  if (!voxelToBlock.empty()) {
+    int D1 = static_cast<int>(Coord.size());
+    int D2 = D1 > 0 ? static_cast<int>(Coord[0].size()) : 0;
+    int D3 = D2 > 0 ? static_cast<int>(Coord[0][0].size()) : 0;
+    VoxelIndex c = WorldToVoxel(position);
+    int best = -1;
+    float bestDist = std::numeric_limits<float>::max();
+    for (int r = 0; r <= 4; ++r) {
+      for (int dx = -r; dx <= r; ++dx) {
+        for (int dy = -r; dy <= r; ++dy) {
+          for (int dz = -r; dz <= r; ++dz) {
+            if (std::max({std::abs(dx), std::abs(dy), std::abs(dz)}) != r) {
+              continue;
+            }
+            int nx = c.x + dx, ny = c.y + dy, nz = c.z + dz;
+            if (nx < 0 || nx >= D1 || ny < 0 || ny >= D2 || nz < 0 ||
+                nz >= D3) {
+              continue;
+            }
+            auto it = voxelToBlock.find({nx, ny, nz});
+            if (it == voxelToBlock.end()) {
+              continue;
+            }
+            float dist = (Coord[nx][ny][nz] - position).squaredNorm();
+            if (dist < bestDist) {
+              bestDist = dist;
+              best = it->second;
+            }
+          }
+        }
+      }
+      if (best >= 0) {
+        return best;
+      }
+    }
+    return -1;
+  }
+
+  // 回退：旧的平面盒包含测试（纯平面管线）
+  for (int i = static_cast<int>(CuttingHexLists.size()) - 1; i >= 0; --i) {
+    if (i < static_cast<int>(sweepBlockNonPlanar.size()) &&
+        sweepBlockNonPlanar[static_cast<size_t>(i)] &&
+        IsPointInCylinderSweepBlock(i, position)) {
+      return i;
+    }
+  }
+
+  int bestPlanar = -1;
+  float bestVolume = std::numeric_limits<float>::max();
+  for (int i = 0; i < static_cast<int>(CuttingHexLists.size()); ++i) {
+    if (i < static_cast<int>(sweepBlockNonPlanar.size()) &&
+        sweepBlockNonPlanar[static_cast<size_t>(i)]) {
+      continue;
+    }
+    const auto &hex = CuttingHexLists[static_cast<size_t>(i)];
+    if (hex.size() != 8) {
+      continue;
+    }
+    if (!insideCuttingBox(position, hex)) {
+      continue;
+    }
+    float vol = CuttingHexVolume(hex);
+    if (vol < bestVolume) {
+      bestVolume = vol;
+      bestPlanar = i;
+    }
+  }
+  return bestPlanar;
+}
+
+Eigen::Vector3f
+DistanceField::SweepDirectionAt(int blockIdx,
+                              const Eigen::Vector3f &position) const {
+  if (blockIdx < 0) {
+    return Eigen::Vector3f::Zero();
+  }
+  if (blockIdx < static_cast<int>(sweepBlocks.size())) {
+    const SweepBlockRegion &block = sweepBlocks[static_cast<size_t>(blockIdx)];
+    if (block.kind == SweepKind::CylindricalBase) {
+      Eigen::Vector3f r = position - block.sweepOrigin;
+      Eigen::Vector3f radial = r - r.dot(block.sweepAxis) * block.sweepAxis;
+      if (radial.norm() > 1e-6f) {
+        return radial.normalized();
+      }
+    }
+  }
+  if (blockIdx < static_cast<int>(SweepDir.size())) {
+    const Eigen::Vector3f &d = SweepDir[static_cast<size_t>(blockIdx)];
+    if (d.norm() > 1e-6f) {
+      return d.normalized();
+    }
+  }
+  return Eigen::Vector3f::UnitZ();
+}
+
+Eigen::Vector3f
+DistanceField::EncodeSweepDirColor(const Eigen::Vector3f &dir) {
+  if (dir.norm() < 1e-8f) {
+    return Eigen::Vector3f(0.5f, 0.5f, 0.5f);
+  }
+  Eigen::Vector3f n = dir.normalized();
+  return 0.5f * (n + Eigen::Vector3f::Ones());
+}
+
+void DistanceField::AppendSweepBlocks(
+    const std::vector<SweepBlockRegion> &blocks,
+    const std::vector<std::map<int, Eigen::Vector3f>> &hexes, bool nonPlanar) {
+  size_t n = std::min(blocks.size(), hexes.size());
+  for (size_t i = 0; i < n; ++i) {
+    const auto &block = blocks[i];
+    this->sweepBlocks.push_back(block);
+    this->SweepDir.push_back(block.sweepAxis);
+    bool blockNonPlanar =
+        nonPlanar || block.kind == SweepKind::CylindricalBase;
+    this->sweepBlockNonPlanar.push_back(blockNonPlanar);
+    this->sweepBlockColors.push_back(
+        RandomSweepColor(static_cast<int>(this->sweepBlockColors.size())));
+    this->CuttingHexLists.push_back(hexes[i]);
+  }
+}
+
+void DistanceField::ApplySweepVisualization() {
+  if (!this->mesh || this->CuttingHexLists.empty()) {
+    return;
+  }
+
+  EnsureSweepBlockColors();
+
+  auto blockColor = [&](int idx) -> Eigen::Vector3f {
+    if (idx >= 0 && idx < static_cast<int>(sweepBlockColors.size())) {
+      return sweepBlockColors[static_cast<size_t>(idx)];
+    }
+    return RandomSweepColor(idx);
+  };
+
+  auto applyBlockColor = [&](MeshLib::CToolVertex *v, int blockIdx) {
+    v->cflabel() = blockIdx;
+    if (blockIdx >= 0) {
+      Eigen::Vector3f c = blockColor(blockIdx);
+      v->rgb()[0] = c.x();
+      v->rgb()[1] = c.y();
+      v->rgb()[2] = c.z();
+    }
+  };
+
+  auto applyFaceBlockColor = [&](MeshLib::CToolFace *f, int blockIdx) {
+    f->sweeplabel() = blockIdx;
+    if (blockIdx >= 0) {
+      Eigen::Vector3f c = blockColor(blockIdx);
+      f->rgb()[0] = c.x();
+      f->rgb()[1] = c.y();
+      f->rgb()[2] = c.z();
+      if (blockIdx < static_cast<int>(sweepBlockNonPlanar.size()) &&
+          sweepBlockNonPlanar[static_cast<size_t>(blockIdx)]) {
+        f->sweepFaceType() = 4;
+      }
+    }
+  };
 
   for (MeshLib::MeshVertexIterator mviter(mesh); !mviter.end(); ++mviter) {
     MeshLib::CToolVertex *v =
         static_cast<MeshLib::CToolVertex *>(mviter.value());
     Eigen::Vector3f position =
         Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
-    Eigen::Vector3f vNormal;
-    vNormal[0] = v->normal()[0];
-    vNormal[1] = v->normal()[1];
-    vNormal[2] = v->normal()[2];
-    for (int i = 0; i < this->CuttingHexLists.size(); i++) {
-      // if (this->insideCuttingBox(position,
-      // CuttingHexLists[i])&&(abs(vNormal.dot(this->SweepDir[i]))<0.1||abs(vNormal.dot(this->SweepDir[i]))-1<0.1))
-      // {
-      if (this->insideCuttingBox(position, CuttingHexLists[i])) {
-        v->rgb()[0] = abs(this->SweepDir[i][0]);
-        v->rgb()[1] = abs(this->SweepDir[i][1]);
-        v->rgb()[2] = abs(this->SweepDir[i][2]);
-        continue;
-      }
+    // 体素归属优先（按距离场空间位置，而非 prime 标签），避免穿过两体的
+    // 同一柱面 prime 被整片强行归到管体。
+    int blockIdx = FindSweepBlockForPoint(position);
+    if (blockIdx < 0) {
+      blockIdx = FindSweepBlockForPrimeLabel(v->label());
     }
+    applyBlockColor(v, blockIdx);
   }
 
   for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); ++mfiter) {
     MeshLib::CToolFace *f = static_cast<MeshLib::CToolFace *>(mfiter.value());
-    f->sweeplabel() = -1;
     int count = 0;
-    Eigen::Vector3f position = Eigen::Vector3f(0, 0, 0);
+    Eigen::Vector3f position = Eigen::Vector3f::Zero();
+    std::unordered_map<int, int> labelVotes;
     for (MeshLib::CTMesh::FaceVertexIterator fviter(f); !fviter.end();
          ++fviter) {
-      auto v = fviter.value();
+      auto *v = static_cast<MeshLib::CToolVertex *>(fviter.value());
       count++;
       position += Eigen::Vector3f(v->point()[0], v->point()[1], v->point()[2]);
+      labelVotes[v->label()]++;
     }
-    position /= count;
-    Eigen::Vector3f fNormal;
-    fNormal[0] = f->normal()[0];
-    fNormal[1] = f->normal()[1];
-    fNormal[2] = f->normal()[2];
+    position /= std::max(count, 1);
 
-    for (int i = 0; i < this->CuttingHexLists.size(); i++) {
-      if (this->insideCuttingBox(position, CuttingHexLists[i])) {
-        // if (this->insideCuttingBox(position,
-        // CuttingHexLists[i])&&(abs(fNormal.dot(this->SweepDir[i]))<0.1||abs(fNormal.dot(this->SweepDir[i]))-1<0.1))
-        // {
-        f->rgb()[0] = abs(this->SweepDir[i][0]);
-        f->rgb()[1] = abs(this->SweepDir[i][1]);
-        f->rgb()[2] = abs(this->SweepDir[i][2]);
-        f->sweeplabel() = i;
-        continue;
-      }
-    }
+    applyFaceBlockColor(f, FindSweepBlockForFace(position, labelVotes));
   }
 
+  std::cout << "Starting Implementer..." << std::endl;
   Implementer implementer(this->mesh);
+  std::cout << "Implementer done, assigning sweep block colors..." << std::endl;
+
   for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); ++mfiter) {
     MeshLib::CToolFace *f = static_cast<MeshLib::CToolFace *>(mfiter.value());
-    f->rgb()[0] = abs(this->SweepDir[f->sweeplabel()][0]);
-    f->rgb()[1] = abs(this->SweepDir[f->sweeplabel()][1]);
-    f->rgb()[2] = abs(this->SweepDir[f->sweeplabel()][2]);
+    std::unordered_map<int, int> labelVotes;
+    for (MeshLib::CTMesh::FaceVertexIterator fviter(f); !fviter.end();
+         ++fviter) {
+      labelVotes[fviter.value()->label()]++;
+    }
+    int count = 0;
+    Eigen::Vector3f position = Eigen::Vector3f::Zero();
+    for (MeshLib::CTMesh::FaceVertexIterator fviter(f); !fviter.end();
+         ++fviter) {
+      count++;
+      position += Eigen::Vector3f(fviter.value()->point()[0],
+                                  fviter.value()->point()[1],
+                                  fviter.value()->point()[2]);
+    }
+    position /= std::max(count, 1);
+    int blockIdx = FindSweepBlockForFace(position, labelVotes);
+    if (blockIdx >= 0) {
+      applyFaceBlockColor(f, blockIdx);
+    } else if (f->sweeplabel() >= 0) {
+      applyFaceBlockColor(f, f->sweeplabel());
+    }
   }
+
+  for (MeshLib::MeshVertexIterator mviter(mesh); !mviter.end(); ++mviter) {
+    MeshLib::CToolVertex *v =
+        static_cast<MeshLib::CToolVertex *>(mviter.value());
+    Eigen::Vector3f position(v->point()[0], v->point()[1], v->point()[2]);
+    // 空间体素归属优先，保证穿过两体的同一柱面 prime 按位置分别着色
+    int spatialBlock = FindSweepBlockForPoint(position);
+    if (spatialBlock >= 0) {
+      applyBlockColor(v, spatialBlock);
+      continue;
+    }
+    std::unordered_map<int, int> votes;
+    for (MeshLib::CTMesh::VertexFaceIterator vfiter(v); !vfiter.end();
+         ++vfiter) {
+      auto *f = static_cast<MeshLib::CToolFace *>(vfiter.value());
+      if (f->sweeplabel() >= 0) {
+        votes[f->sweeplabel()]++;
+      }
+    }
+    if (!votes.empty()) {
+      int bestBlock = votes.begin()->first;
+      int bestCount = votes.begin()->second;
+      for (const auto &[bid, cnt] : votes) {
+        if (cnt > bestCount) {
+          bestBlock = bid;
+          bestCount = cnt;
+        }
+      }
+      applyBlockColor(v, bestBlock);
+    }
+  }
+
+  std::map<int, int> faceBlockCounts;
+  for (MeshLib::MeshFaceIterator mfiter(mesh); !mfiter.end(); ++mfiter) {
+    auto *f = static_cast<MeshLib::CToolFace *>(mfiter.value());
+    if (f->sweeplabel() >= 0) {
+      faceBlockCounts[f->sweeplabel()]++;
+    }
+  }
+  std::cout << "[ApplySweepVisualization] face block distribution:";
+  for (const auto &[blockId, count] : faceBlockCounts) {
+    std::cout << " " << blockId << "(" << count << ")";
+  }
+  std::cout << std::endl;
 
   for (MeshLib::MeshFaceIterator mviter(this->mesh); !mviter.end(); ++mviter) {
     MeshLib::CToolFace *face =
         static_cast<MeshLib::CToolFace *>(mviter.value());
+    int sl = face->sweeplabel();
+    if (sl >= 0 && sl < static_cast<int>(sweepBlockNonPlanar.size()) &&
+        sweepBlockNonPlanar[static_cast<size_t>(sl)]) {
+      face->sweepFaceType() = 4;
+      continue;
+    }
+
     CPoint p1 = (face->halfedge()->target()->point() -
                  face->halfedge()->source()->point());
     CPoint p2 = (face->halfedge()->he_next()->target()->point() -
                  face->halfedge()->he_next()->source()->point());
     CPoint normal = p1 ^ p2;
+    if (normal.norm() < 1e-12) {
+      face->sweepFaceType() = 0;
+      continue;
+    }
     normal /= normal.norm();
     face->normal() = normal;
-    CPoint sweepDir = face->rgb();
-    sweepDir /= sweepDir.norm();
-    double angle = normal * sweepDir;
+
     face->sweepFaceType() = 0;
+    if (sl < 0) {
+      continue;
+    }
+
+    int count = 0;
+    Eigen::Vector3f position = Eigen::Vector3f::Zero();
+    for (MeshLib::CTMesh::FaceVertexIterator fviter(face); !fviter.end();
+         ++fviter) {
+      count++;
+      position += Eigen::Vector3f(fviter.value()->point()[0],
+                                  fviter.value()->point()[1],
+                                  fviter.value()->point()[2]);
+    }
+    position /= std::max(count, 1);
+
+    Eigen::Vector3f sweepDir = SweepDirectionAt(sl, position);
+    if (sweepDir.norm() < 1e-8f) {
+      continue;
+    }
+    sweepDir.normalize();
+    double angle = normal[0] * sweepDir.x() + normal[1] * sweepDir.y() +
+                   normal[2] * sweepDir.z();
     if (angle > 0.8) {
       face->sweepFaceType() = 1;
-    } else if (abs(angle) < 0.1) {
+    } else if (std::abs(angle) < 0.1) {
       face->sweepFaceType() = 2;
     } else if (angle < -0.8) {
       face->sweepFaceType() = 3;
@@ -935,7 +1407,8 @@ void DistanceField::DFS(MeshLib::CToolVertex *vert, int label) {
  * * Uses Point-to-Plane test with corrected external normal vectors.
  */
 bool DistanceField::insideCuttingBox(
-    Eigen::Vector3f point, const std::map<int, Eigen::Vector3f> &verticesMap) {
+    Eigen::Vector3f point,
+    const std::map<int, Eigen::Vector3f> &verticesMap) const {
 
   if (verticesMap.size() != 8) {
     std::cerr << "Error in insideCuttingBox: Vertex map size is not 8."
@@ -1062,10 +1535,16 @@ void DistanceField::readPrime(string primefile) {
   }
 
   file.close();
+  ReindexPrimesById();
 
   for (MeshLib::MeshVertexIterator mviter(mesh); !mviter.end(); ++mviter) {
     MeshLib::CToolVertex *v =
         static_cast<MeshLib::CToolVertex *>(mviter.value());
+
+    int lbl = v->label();
+    if (!PrimeLabelValid(lbl)) {
+      continue;
+    }
 
     bool FeaturePoint = false;
     for (MeshLib::CTMesh::VertexVertexIterator vviter(v); !vviter.end();
@@ -1078,7 +1557,7 @@ void DistanceField::readPrime(string primefile) {
     }
     if (FeaturePoint)
       continue;
-    auto params = primes[v->label()].params;
+    auto params = primes[lbl].params;
     auto vertPoint = v->point();
 
     Eigen::Vector3f Percise_normal = Eigen::Vector3f(0, 0, 0);
@@ -1096,49 +1575,52 @@ void DistanceField::readPrime(string primefile) {
     v->normal()[1] = Percise_normal[1];
     v->normal()[2] = Percise_normal[2];
   }
-  int maxPrimeid = 0;
+  int maxPrimeid = static_cast<int>(this->primes.size()) - 1;
 
-  for (int i = 0; i < this->primes.size(); i++) {
-    if (this->primes[i].id > maxPrimeid)
-      maxPrimeid = primes[i].id;
-  }
+  for (int i = 0; i <= maxPrimeid; ++i) {
+    if (this->primes[static_cast<size_t>(i)].id != i) {
+      continue;
+    }
 
-  for (int i = 0; i < this->primes.size(); i++) {
     MeshLib::CToolVertex *startvertex = NULL;
     for (MeshLib::MeshVertexIterator mviter(this->mesh); !mviter.end();
          ++mviter) {
       MeshLib::CToolVertex *v =
           static_cast<MeshLib::CToolVertex *>(mviter.value());
-      if (startvertex == NULL && v->label() == primes[i].id)
+      if (startvertex == NULL && v->label() == i)
         startvertex = v;
       v->marked() = false;
     }
     if (startvertex == NULL)
       continue;
 
-    DFS(startvertex, primes[i].id);
+    DFS(startvertex, i);
     bool hasPoped = false;
     for (MeshLib::MeshVertexIterator mviter(this->mesh); !mviter.end();
          ++mviter) {
       MeshLib::CToolVertex *v =
           static_cast<MeshLib::CToolVertex *>(mviter.value());
-      if (v->label() == this->primes[i].id && v->marked() == false) {
+      if (v->label() == i && v->marked() == false) {
         v->label() = maxPrimeid + 1;
         hasPoped = true;
       }
     }
     if (hasPoped) {
-      PrimeData newprime = this->primes[i];
+      PrimeData newprime = this->primes[static_cast<size_t>(i)];
       newprime.id = maxPrimeid + 1;
       maxPrimeid++;
-      this->primes.push_back(newprime);
+      if (static_cast<int>(this->primes.size()) <= maxPrimeid) {
+        this->primes.resize(static_cast<size_t>(maxPrimeid) + 1);
+      }
+      this->primes[static_cast<size_t>(maxPrimeid)] = newprime;
     }
   }
 
-  for (int i = 0; i < this->primes.size(); i++) {
-    auto &m_params = this->primes[i].params;
+  for (int i = 0; i < static_cast<int>(this->primes.size()); i++) {
+    auto &m_params = this->primes[static_cast<size_t>(i)].params;
 
-    std::cout << "ID: " << this->primes[i].id << " Params: " << m_params[0]
+    std::cout << "ID: " << this->primes[static_cast<size_t>(i)].id
+              << " Params: " << m_params[0]
               << " " << m_params[1] << " " << m_params[2] << " " << m_params[3]
               << " " << m_params[4] << " " << m_params[5] << " " << m_params[6]
               << " " << m_params[7] << " " << m_params[8] << " " << m_params[9]
@@ -1198,7 +1680,11 @@ void DistanceField::SaveGradianceToBinary(const std::string &filename) {
   std::cout << "Field data saved to " << filename << std::endl;
 }
 
-void DistanceField::SweepProjection_Regist() {
+void DistanceField::RunCuttingBoxPipeline(bool cutMesh) {
+  SweepProjection_Regist(cutMesh);
+}
+
+void DistanceField::SweepProjection_Regist(bool cutMesh) {
   this->ExtractSweepDir();
 
   if (this->getGradianceCount().size() == 0) {
@@ -1226,8 +1712,8 @@ void DistanceField::SweepProjection_Regist() {
                    SweepDir[DirCount].norm())));
           ProjScalarXYZ = abs(angle) > abs(PI / 2 - angle) ? abs(PI / 2 - angle)
                                                            : abs(angle);
-          if (this->Field[i][j][k] < 0)
-            ProjScalarXYZ = 0;
+          if (this->Field[i][j][k] < 0.0f)
+            ProjScalarXYZ = EXTERIOR_SWEEP_ENERGY;
           ProjScalarXY.push_back(ProjScalarXYZ);
         }
         ProjScalarX.push_back(ProjScalarXY);
@@ -1239,21 +1725,33 @@ void DistanceField::SweepProjection_Regist() {
 
   SweepDirFilter sf(&this->SweepDir, &this->SweepProjScalar, this->FieldLabel);
   this->SweepProjEnergy = this->SweepProjScalar;
+  std::cout << "SweepDirFilter done. SweepDir size: " << this->SweepDir.size()
+            << ", SweepProjEnergy size: " << this->SweepProjEnergy.size()
+            << std::endl;
   SweepDirSpliter sp(this->mesh, &this->SweepDir, &this->SweepProjEnergy,
                      this->FieldLabel);
+  std::cout << "SweepDirSpliter done. SweepDir size: " << this->SweepDir.size()
+            << std::endl;
   int DirSize = this->SweepDir.size();
   auto SweepEnergy = this->SweepProjEnergy;
   float patch = (this->Coord[0][0][0] - this->Coord[0][0][1]).norm();
   STEP_SIZE = patch;
+  std::cout << "Starting energy computation..." << std::endl;
   for (int dirs = 0; dirs < this->SweepProjEnergy.size(); dirs++) {
     for (int x = 0; x < this->SweepProjEnergy[dirs].size(); x++) {
       for (int y = 0; y < this->SweepProjEnergy[dirs][x].size(); y++) {
         for (int z = 0; z < this->SweepProjEnergy[dirs][x][y].size(); z++) {
-          if (this->FieldLabel[x][y][z] < 0 && this->Field[x][y][z] > 0) {
+          if (this->Field[x][y][z] < 0.0f) {
+            SweepEnergy[dirs][x][y][z] = EXTERIOR_SWEEP_ENERGY;
+            continue;
+          }
+          int fl = this->FieldLabel[x][y][z];
+          if (fl < 0) {
             SweepEnergy[dirs][x][y][z] = -2e-4;
             continue;
           }
-          if (this->primes[this->FieldLabel[x][y][z]].isPlane &&
+          const PrimeData *prime = GetPrimeByLabel(fl);
+          if (prime && prime->isPlane &&
               abs(this->Field[x][y][z]) < 2 * patch) {
             SweepEnergy[dirs][x][y][z] = -2e-3;
             continue;
@@ -1273,11 +1771,489 @@ void DistanceField::SweepProjection_Regist() {
     }
   }
   this->SweepProjEnergy = SweepEnergy;
+  sweepBlockNonPlanar.clear();
+  sweepBlockColors.clear();
   for (int i = 0; i < this->SweepDir.size(); i++) {
     CuttingBox cb(SweepDir, &SweepProjEnergy, Coord, this->FieldLabel,
                   this->Field, this->primes, i);
     this->ForbiddenBoundaryPoints = cb.GetForbiddenBoundaryPoints();
     this->CuttingHexLists.push_back(cb.GetBoxVertices());
+    this->sweepBlockNonPlanar.push_back(false);
+    this->sweepBlockColors.push_back(RandomSweepColor(i));
   }
-  MeshCutter mc(this->mesh, this->CuttingHexLists);
+  std::cout << "CuttingBoxes done (" << this->CuttingHexLists.size() << ")"
+            << std::endl;
+  if (cutMesh && this->mesh && !this->CuttingHexLists.empty()) {
+    std::cout << "Running MeshCutter..." << std::endl;
+    MeshCutter mc(this->mesh, this->CuttingHexLists);
+    std::cout << "MeshCutter done." << std::endl;
+  }
+}
+
+static std::vector<std::map<int, Eigen::Vector3f>>
+FilterValidHexes(const std::vector<std::map<int, Eigen::Vector3f>> &hexes,
+                 float stepSize) {
+  std::vector<std::map<int, Eigen::Vector3f>> validHexes;
+  for (const auto &hex : hexes) {
+    if (hex.size() != 8) {
+      continue;
+    }
+    float minEdge = std::numeric_limits<float>::max();
+    for (int i = 0; i < 8; ++i) {
+      for (int j = i + 1; j < 8; ++j) {
+        minEdge = std::min(minEdge, (hex.at(i) - hex.at(j)).norm());
+      }
+    }
+    if (minEdge > 1e-4f * stepSize) {
+      validHexes.push_back(hex);
+    }
+  }
+  return validHexes;
+}
+
+void DistanceField::GeneralizedSweepDecomposition(float angularThreshold,
+                                                bool cylinderPairsOnly) {
+  if (this->Field.empty() || this->GradianceField.empty() ||
+      this->primes.empty()) {
+    std::cerr << "[GeneralizedSweepDecomposition] Prerequisite data missing. "
+              << "Ensure ComputeDistanceField() and readPrime() are called first."
+              << std::endl;
+    return;
+  }
+
+  std::cout << "[GeneralizedSweepDecomposition] threshold=" << angularThreshold
+            << " rad"
+            << (cylinderPairsOnly ? " (cylinder pairs only)" : "") << std::endl;
+
+  if (!cylinderPairsOnly) {
+    this->CuttingHexLists.clear();
+    this->sweepBlocks.clear();
+    this->SweepDir.clear();
+    this->sweepBlockNonPlanar.clear();
+    this->sweepBlockColors.clear();
+  }
+
+  float stepSize = (Coord[0][0][0] - Coord[0][0][1]).norm();
+  SweepDecomposer decomposer(this->Coord, this->Field, this->FieldLabel,
+                             this->GradianceField, this->primes,
+                             angularThreshold, cylinderPairsOnly, this->mesh);
+
+  auto blocks = decomposer.GetBlocks();
+  if (cylinderPairsOnly) {
+    this->cylinderPairViz = decomposer.GetCylinderPairViz();
+  }
+  auto hexes = FilterValidHexes(decomposer.GetBlockHexVertices(), stepSize);
+  if (blocks.size() != hexes.size()) {
+    size_t n = std::min(blocks.size(), hexes.size());
+    blocks.resize(n);
+    hexes.resize(n);
+  }
+
+  bool nonPlanar = cylinderPairsOnly;
+  if (!cylinderPairsOnly) {
+    for (const auto &block : blocks) {
+      nonPlanar = block.kind == SweepKind::CylindricalBase;
+      if (nonPlanar) {
+        break;
+      }
+    }
+  }
+
+  AppendSweepBlocks(blocks, hexes, nonPlanar);
+
+  int nonPlanarCount = 0;
+  for (bool flag : this->sweepBlockNonPlanar) {
+    if (flag) {
+      nonPlanarCount++;
+    }
+  }
+  std::cout << "[GeneralizedSweepDecomposition] " << blocks.size()
+            << " blocks appended, total hexes "
+            << this->CuttingHexLists.size() << " (non-planar "
+            << nonPlanarCount << ", base planar "
+            << FindBasePlanarHexIndex() << ")\n";
+
+  if (!cylinderPairsOnly && !this->CuttingHexLists.empty() && this->mesh) {
+    MeshCutter mc(this->mesh, this->CuttingHexLists);
+    std::cout << "[GeneralizedSweepDecomposition] MeshCutter done." << std::endl;
+  }
+}
+
+void DistanceField::AppendCylinderSweepDecomposition(float angularThreshold) {
+  std::cout << "[AppendCylinderSweep] non-planar sweep for gradient-matched "
+               "cylinder pairs only\n";
+  GeneralizedSweepDecomposition(angularThreshold, true);
+}
+
+VoxelIndex DistanceField::WorldToVoxel(const Eigen::Vector3f &p) const {
+  const Eigen::Vector3f &o = Coord[0][0][0];
+  int D1 = static_cast<int>(Coord.size());
+  int D2 = D1 > 0 ? static_cast<int>(Coord[0].size()) : 0;
+  int D3 = D2 > 0 ? static_cast<int>(Coord[0][0].size()) : 0;
+  int i = static_cast<int>(std::lround((p.x() - o.x()) / PatchSize));
+  int j = static_cast<int>(std::lround((p.y() - o.y()) / PatchSize));
+  int k = static_cast<int>(std::lround((p.z() - o.z()) / PatchSize));
+  i = std::max(0, std::min(D1 - 1, i));
+  j = std::max(0, std::min(D2 - 1, j));
+  k = std::max(0, std::min(D3 - 1, k));
+  return {i, j, k};
+}
+
+std::map<int, Eigen::Vector3f>
+DistanceField::BuildOrientedHex(const std::vector<Eigen::Vector3f> &pts,
+                                const Eigen::Vector3f &axis,
+                                const Eigen::Vector3f &origin) const {
+  Eigen::Vector3f ax = axis.normalized();
+  Eigen::Vector3f arbitrary =
+      (std::abs(ax.dot(Eigen::Vector3f::UnitX())) < 0.9f)
+          ? Eigen::Vector3f::UnitX()
+          : Eigen::Vector3f::UnitY();
+  Eigen::Vector3f crossY = (arbitrary - ax.dot(arbitrary) * ax).normalized();
+  Eigen::Vector3f crossZ = ax.cross(crossY).normalized();
+
+  float axMin = std::numeric_limits<float>::max();
+  float axMax = std::numeric_limits<float>::lowest();
+  float minY = std::numeric_limits<float>::max();
+  float maxY = std::numeric_limits<float>::lowest();
+  float minZ = std::numeric_limits<float>::max();
+  float maxZ = std::numeric_limits<float>::lowest();
+  for (const auto &p : pts) {
+    Eigen::Vector3f rel = p - origin;
+    float a = rel.dot(ax);
+    float cy = rel.dot(crossY);
+    float cz = rel.dot(crossZ);
+    axMin = std::min(axMin, a);
+    axMax = std::max(axMax, a);
+    minY = std::min(minY, cy);
+    maxY = std::max(maxY, cy);
+    minZ = std::min(minZ, cz);
+    maxZ = std::max(maxZ, cz);
+  }
+
+  const float margin = std::max(PatchSize, 0.05f);
+  axMin -= margin;
+  axMax += margin;
+  minY -= margin;
+  maxY += margin;
+  minZ -= margin;
+  maxZ += margin;
+
+  auto corner = [&](float a, float cy, float cz) {
+    return origin + a * ax + cy * crossY + cz * crossZ;
+  };
+
+  std::map<int, Eigen::Vector3f> vertices;
+  float axVals[] = {axMin, axMax};
+  float yVals[] = {minY, maxY};
+  float zVals[] = {minZ, maxZ};
+  int idx = 0;
+  for (float a : axVals) {
+    for (float cy : yVals) {
+      for (float cz : zVals) {
+        vertices[idx++] = corner(a, cy, cz);
+      }
+    }
+  }
+  return vertices;
+}
+
+namespace {
+std::vector<std::vector<std::vector<float>>> ComputeDirectionalSweepEnergy(
+    const std::vector<std::vector<std::vector<Eigen::Vector3f>>> &GradField,
+    const std::vector<std::vector<std::vector<float>>> &Field,
+    const Eigen::Vector3f &sweepDir) {
+  const int D1 = static_cast<int>(Field.size());
+  const int D2 = D1 > 0 ? static_cast<int>(Field[0].size()) : 0;
+  const int D3 = D2 > 0 ? static_cast<int>(Field[0][0].size()) : 0;
+  std::vector<std::vector<std::vector<float>>> grid(
+      D1, std::vector<std::vector<float>>(
+              D2, std::vector<float>(D3, EXTERIOR_SWEEP_ENERGY)));
+  const Eigen::Vector3f dir = sweepDir.normalized();
+  for (int x = 0; x < D1; ++x) {
+    for (int y = 0; y < D2; ++y) {
+      for (int z = 0; z < D3; ++z) {
+        if (Field[x][y][z] < 0.0f) {
+          continue;
+        }
+        const Eigen::Vector3f &g = GradField[x][y][z];
+        if (g.norm() < 1e-8f) {
+          grid[x][y][z] = static_cast<float>(PI) / 4.0f;
+          continue;
+        }
+        float c = std::min(
+            1.0f, std::abs(g.normalized().dot(dir)));
+        float angle = std::acos(c);
+        grid[x][y][z] =
+            std::min(angle, std::abs(static_cast<float>(PI) / 2.0f - angle));
+      }
+    }
+  }
+  return grid;
+}
+} // namespace
+
+void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
+  std::cout << "[TwoSweepBodies] decomposing into cylinder-radial (tube) + "
+               "vertical (cube) bodies\n";
+
+  // --- 1. 先用柱面分解拿到柱轴/原点/成员 prime（仅取几何参数） ---
+  GeneralizedSweepDecomposition(angularThreshold, /*cylinderPairsOnly=*/true);
+
+  Eigen::Vector3f axis = Eigen::Vector3f::UnitY();
+  Eigen::Vector3f origin = Eigen::Vector3f::Zero();
+  std::vector<int> memberPrimeIds;
+  if (!this->sweepBlocks.empty()) {
+    axis = this->sweepBlocks.front().sweepAxis.normalized();
+    origin = this->sweepBlocks.front().sweepOrigin;
+    memberPrimeIds = this->sweepBlocks.front().memberPrimeIds;
+  }
+  if (axis.norm() < 1e-6f) {
+    axis = Eigen::Vector3f::UnitY();
+  }
+
+  // 清空中间状态，重建两个扫掠体
+  this->CuttingHexLists.clear();
+  this->sweepBlocks.clear();
+  this->SweepDir.clear();
+  this->sweepBlockNonPlanar.clear();
+  this->sweepBlockColors.clear();
+  this->cylinderPairViz.clear();
+  this->voxelToBlock.clear();
+
+  auto radialDist = [&](const Eigen::Vector3f &p) {
+    Eigen::Vector3f rel = p - origin;
+    return (rel - rel.dot(axis) * axis).norm();
+  };
+  auto axialPos = [&](const Eigen::Vector3f &p) {
+    return (p - origin).dot(axis);
+  };
+
+  // --- 2. 从网格统计每片柱面 prime 的半径与轴向范围，定位“管壁”特征 ---
+  std::set<int> memberSet(memberPrimeIds.begin(), memberPrimeIds.end());
+  std::map<int, float> primeRadiusSum;
+  std::map<int, int> primeCount;
+  std::map<int, float> primeAxMin;
+  std::map<int, float> primeAxMax;
+  if (this->mesh) {
+    for (MeshLib::MeshVertexIterator viter(this->mesh); !viter.end(); ++viter) {
+      auto *v = static_cast<MeshLib::CToolVertex *>(viter.value());
+      int lbl = v->label();
+      if (!memberSet.count(lbl)) {
+        continue;
+      }
+      Eigen::Vector3f p(v->point()[0], v->point()[1], v->point()[2]);
+      primeRadiusSum[lbl] += radialDist(p);
+      float a = axialPos(p);
+      if (!primeCount.count(lbl)) {
+        primeAxMin[lbl] = a;
+        primeAxMax[lbl] = a;
+      } else {
+        primeAxMin[lbl] = std::min(primeAxMin[lbl], a);
+        primeAxMax[lbl] = std::max(primeAxMax[lbl], a);
+      }
+      primeCount[lbl]++;
+    }
+  }
+
+  // 管壁 = 轴向跨度大的柱面 prime（区别于柱孔底盖等短小成员）。
+  // 取这些管壁的内外半径作为“同一中轴、不同半径”的切割指标。
+  float maxExtent = 0.0f;
+  for (const auto &[lbl, axMin] : primeAxMin) {
+    maxExtent = std::max(maxExtent, primeAxMax[lbl] - axMin);
+  }
+  int outerPrime = -1;
+  float rOuter = 0.0f;
+  float rInner = std::numeric_limits<float>::max();
+  std::set<int> wallPrimes;
+  for (const auto &[lbl, sum] : primeRadiusSum) {
+    int cnt = primeCount[lbl];
+    if (cnt <= 0) {
+      continue;
+    }
+    float r = sum / static_cast<float>(cnt);
+    float extent = primeAxMax[lbl] - primeAxMin[lbl];
+    bool isWall = extent >= 0.4f * maxExtent;
+    std::cout << "[TwoSweepBodies] cylinder prime " << lbl << " avgR=" << r
+              << " ax=[" << primeAxMin[lbl] << ", " << primeAxMax[lbl]
+              << "] extent=" << extent << (isWall ? " [wall]" : "") << "\n";
+    if (!isWall) {
+      continue; // 短小成员（如底座柱孔）不参与管壁半径
+    }
+    wallPrimes.insert(lbl);
+    if (r > rOuter) {
+      rOuter = r;
+      outerPrime = lbl;
+    }
+    rInner = std::min(rInner, r);
+  }
+  if (rInner > rOuter) {
+    rInner = 0.0f;
+  }
+
+  // === 能量柱面切割盒：求半径范围 [MinR,MaxR] 与轴向范围 [MinAx,MaxAx] ===
+  float tubeAxLow = std::numeric_limits<float>::lowest();
+  float tubeAxHigh = std::numeric_limits<float>::max();
+  std::map<int, Eigen::Vector3f> tubeHexFromCut;
+  std::vector<std::vector<std::vector<float>>> radialEnergyField;
+  bool haveTubeCut = false;
+  bool haveRadialEnergy = false;
+  if (outerPrime >= 0) {
+    CylinderCuttingBox cyl(axis, origin, rInner, rOuter, this->Coord,
+                           this->Field, this->FieldLabel, this->GradianceField,
+                           wallPrimes, angularThreshold);
+    rInner = cyl.GetMinR();
+    rOuter = cyl.GetMaxR();
+    tubeAxLow = cyl.GetMinAx();
+    tubeAxHigh = cyl.GetMaxAx();
+    tubeHexFromCut = cyl.GetBoxVertices();
+    radialEnergyField = cyl.ComputeRadialEnergyField();
+    haveTubeCut = true;
+    haveRadialEnergy = true;
+  }
+
+  // --- 3. 按轴向把内部体素分到 管(径向) / 底座(垂直) 两体 ---
+  int D1 = static_cast<int>(Field.size());
+  int D2 = D1 > 0 ? static_cast<int>(Field[0].size()) : 0;
+  int D3 = D2 > 0 ? static_cast<int>(Field[0][0].size()) : 0;
+
+  SweepBlockRegion tubeBody;
+  tubeBody.kind = SweepKind::CylindricalBase;
+  tubeBody.sweepAxis = axis;
+  tubeBody.sweepOrigin = origin;
+  tubeBody.memberPrimeIds = memberPrimeIds;
+  tubeBody.primeId = memberPrimeIds.empty() ? -1 : memberPrimeIds.front();
+  tubeBody.isValid = true;
+
+  SweepBlockRegion cubeBody;
+  cubeBody.kind = SweepKind::Translational;
+  cubeBody.sweepAxis = axis;
+  cubeBody.primeId = -1;
+  cubeBody.isValid = true;
+
+  std::vector<Eigen::Vector3f> tubePts;
+  std::vector<Eigen::Vector3f> cubePts;
+  Eigen::Vector3f tubeCen = Eigen::Vector3f::Zero();
+  Eigen::Vector3f cubeCen = Eigen::Vector3f::Zero();
+
+  // 注意：本工程距离场约定 Field>0 为实体内部、Field<0 为外部。
+  // 管体 = 落在柱面切割盒（轴向范围 × 半径范围）内的实体体素；其余归底座。
+  const float rBand = 2.0f * PatchSize;
+  for (int x = 0; x < D1; ++x) {
+    for (int y = 0; y < D2; ++y) {
+      for (int z = 0; z < D3; ++z) {
+        if (Field[x][y][z] <= 0.0f) {
+          continue; // 仅取实体内部体素
+        }
+        const Eigen::Vector3f &p = Coord[x][y][z];
+        float a = axialPos(p);
+        float r = radialDist(p);
+        VoxelIndex vi{x, y, z};
+        bool inTubeBand = (a >= tubeAxLow && a <= tubeAxHigh);
+        if (haveTubeCut && inTubeBand && r <= rOuter + rBand) {
+          tubeBody.coveredVoxels.insert(vi);
+          tubePts.push_back(p);
+          tubeCen += p;
+        } else {
+          cubeBody.coveredVoxels.insert(vi);
+          cubePts.push_back(p);
+          cubeCen += p;
+        }
+      }
+    }
+  }
+
+  // --- 4. 构建两体的定向包围盒并登记 ---
+  if (!tubePts.empty()) {
+    tubeCen /= static_cast<float>(tubePts.size());
+    tubeBody.radialInner = std::max(0.0f, rInner);
+    tubeBody.radialOuter = rOuter;
+    tubeBody.axialLower = tubeAxLow;
+    tubeBody.axialUpper = tubeAxHigh;
+    std::map<int, Eigen::Vector3f> tubeHex =
+        haveTubeCut ? tubeHexFromCut : BuildOrientedHex(tubePts, axis, origin);
+    this->sweepBlocks.push_back(tubeBody);
+    this->SweepDir.push_back(axis);
+    this->sweepBlockNonPlanar.push_back(true);
+    this->sweepBlockColors.push_back(
+        RandomSweepColor(static_cast<int>(this->sweepBlockColors.size())));
+    this->CuttingHexLists.push_back(tubeHex);
+  }
+
+  if (!cubePts.empty()) {
+    cubeCen /= static_cast<float>(cubePts.size());
+    cubeBody.sweepOrigin = cubeCen;
+    std::map<int, Eigen::Vector3f> cubeHex =
+        BuildOrientedHex(cubePts, axis, cubeCen);
+    this->sweepBlocks.push_back(cubeBody);
+    this->SweepDir.push_back(axis);
+    this->sweepBlockNonPlanar.push_back(false);
+    this->sweepBlockColors.push_back(
+        RandomSweepColor(static_cast<int>(this->sweepBlockColors.size())));
+    this->CuttingHexLists.push_back(cubeHex);
+  }
+
+  // --- 5. 体素 -> 分块 归属表（管体优先） ---
+  for (int i = static_cast<int>(this->sweepBlocks.size()) - 1; i >= 0; --i) {
+    for (const auto &v :
+         this->sweepBlocks[static_cast<size_t>(i)].coveredVoxels) {
+      voxelToBlock[v] = i;
+    }
+  }
+
+  std::cout << "[TwoSweepBodies] body count=" << this->sweepBlocks.size()
+            << " (tube voxels=" << tubePts.size()
+            << ", cube voxels=" << cubePts.size() << ") outerPrime="
+            << outerPrime << " rInner=" << rInner << " rOuter=" << rOuter
+            << " tubeAx=[" << tubeAxLow << ", " << tubeAxHigh << "]\n";
+
+  // --- 6. 写入体素场能量，供 VolumeGrid 可视化 ---
+  this->SweepProjScalar.clear();
+  this->SweepProjEnergy.clear();
+  this->sweepEnergyNames.clear();
+  if (haveRadialEnergy) {
+    this->SweepProjScalar.push_back(radialEnergyField);
+    this->SweepProjEnergy.push_back(radialEnergyField);
+    this->sweepEnergyNames.push_back("Cylinder Radial Energy");
+  }
+  auto verticalEnergyField =
+      ComputeDirectionalSweepEnergy(this->GradianceField, this->Field, axis);
+  this->SweepProjScalar.push_back(verticalEnergyField);
+  this->SweepProjEnergy.push_back(verticalEnergyField);
+  this->sweepEnergyNames.push_back("Vertical Sweep Energy");
+  std::cout << "[TwoSweepBodies] energy fields registered: "
+            << this->sweepEnergyNames.size() << "\n";
+}
+
+void DistanceField::ReducePrimesToDevelopable(double curvatureThreshold,
+                                              const std::string &exportPath) {
+  if (this->primes.empty() || !this->mesh) {
+    std::cerr << "[ReducePrimesToDevelopable] Need mesh and primes (readPrime "
+                 "first).\n";
+    return;
+  }
+
+  DevelopableReducer::Config cfg;
+  cfg.curvatureThreshold = curvatureThreshold;
+  DevelopableReducer::ReduceAll(this->primes, this->mesh, cfg);
+
+  if (!exportPath.empty()) {
+    std::ofstream out(exportPath);
+    if (!out.is_open()) {
+      std::cerr << "[ReducePrimesToDevelopable] Cannot write " << exportPath
+                << "\n";
+      return;
+    }
+    for (const auto &prime : this->primes) {
+      out << "m_primes[" << prime.id << "]->GetParams():\n";
+      for (int i = 0; i < 10; ++i) {
+        double v = (i < static_cast<int>(prime.params.size())) ? prime.params[i]
+                                                               : 0.0;
+        out << v << "\n";
+      }
+      out << "of Rank: " << prime.rank << ",Residual: " << prime.residual
+          << "\n";
+    }
+    out.close();
+    std::cout << "[ReducePrimesToDevelopable] Wrote " << exportPath << "\n";
+  }
 }

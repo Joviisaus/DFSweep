@@ -10,6 +10,8 @@
 inline float STEP_SIZE = 0.05f;       // 每一步微调的量
 const int MAX_ITERATIONS = 300;       // 最大迭代次数
 const float ENERGY_TOLERANCE = 1e-4f; // 能量变化小于此值则停止
+/// 封闭模型外部体素的扫掠能量哨兵值（勿用 0，否则会被当作极低能量导致过度扩张）
+constexpr float EXTERIOR_SWEEP_ENERGY = 1e-4f;
 
 class CuttingBox {
 public:

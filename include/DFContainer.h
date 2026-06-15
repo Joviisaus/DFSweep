@@ -2,18 +2,27 @@
 #define __DFCONTAINER_H__
 #include "ColorImplementer.h"
 #include "CuttingBox.h"
+#include "CylinderCuttingBox.h"
+#include "DevelopableReducer.h"
 #include "MeshCutter.h"
 #include "OctTree.h"
+#include "SweepBlock.h"
 #include "SweepDirDetector.h"
 #include "SweepDirFilter.h"
 #include <Eigen/Eigen>
 #include <Eigen/src/Core/Matrix.h>
 #include <float.h>
+#include <unordered_map>
 
 inline double epsilon = 1e-2f;
 inline double PI = 3.1415926;
 inline int SampleSize = 100;
 inline float Alpha = 0.6;
+
+void ComputeNearestPointsCPU(
+    const std::vector<std::vector<std::vector<Eigen::Vector3f>>> &Coord,
+    const std::vector<std::vector<float>> &PointList,
+    std::vector<std::vector<std::vector<int>>> &NearestIndex);
 
 class DistanceField {
 public:
@@ -36,6 +45,9 @@ public:
   GetSweepProjEnergy() {
     return this->SweepProjEnergy;
   };
+  const std::vector<std::string> &getSweepEnergyNames() const {
+    return sweepEnergyNames;
+  }
   std::vector<std::vector<std::vector<int>>> getGradianceCount() {
     return this->GradianceCount;
   };
@@ -50,14 +62,55 @@ public:
   };
 
   std::vector<Eigen::Vector3f> getSweepDir() { return this->SweepDir; }
+  const std::vector<bool> &getSweepBlockNonPlanar() const {
+    return sweepBlockNonPlanar;
+  }
+  const std::vector<Eigen::Vector3f> &getSweepBlockColors() const {
+    return sweepBlockColors;
+  }
+  std::vector<int> getDisplayHexIndices() const;
   void SaveFieldToBinary(const std::string &filename);
   void SaveGradianceToBinary(const std::string &filename);
+
+  /**
+   * @brief Generalized sweep decomposition using iso-surface growth from
+   * surface patches. Supports translational, rotational, and radial sweeps.
+   * @param angularThreshold Angle threshold (radians) for direction constraint
+   */
+  void GeneralizedSweepDecomposition(float angularThreshold = 0.3f,
+                                   bool cylinderPairsOnly = false);
+  void AppendCylinderSweepDecomposition(float angularThreshold = 0.3f);
+  /**
+   * @brief 将 K≠0 的二次解析片替换为平面/柱面（K=0），并更新顶点法向。
+   */
+  void ReducePrimesToDevelopable(
+      double curvatureThreshold = 1e-4,
+      const std::string &exportPath = "");
+  void RunCuttingBoxPipeline(bool cutMesh = false);
+  /**
+   * @brief 将模型分解为恰好两个扫掠体：
+   *  - 柱面径向扫掠体（空心柱面，从内向外）
+   *  - 垂直平移扫掠体（带柱孔的底座，沿柱轴方向）
+   * 使用距离场体素归属来标记两个扫掠分块。
+   */
+  void DecomposeIntoTwoSweepBodies(float angularThreshold = 0.3f);
+  void ApplySweepVisualization();
+  bool HasNonPlanarPrimes() const;
+  bool PrimeLabelValid(int label) const;
+  const PrimeData *GetPrimeByLabel(int label) const;
+  std::vector<SweepBlockRegion> GetSweepBlocks() const {
+    return this->sweepBlocks;
+  }
+  const std::vector<CylinderPairViz> &GetCylinderPairViz() const {
+    return cylinderPairViz;
+  }
 
 protected:
   MeshLib::CTMesh *mesh;
   float PatchSize;
   std::vector<std::vector<float>> PointList;
   std::vector<int> PointIDList;
+  std::vector<MeshLib::CToolVertex *> VertexPtrList;
   std::vector<std::vector<std::vector<float>>> Field;
   std::vector<std::vector<std::vector<int>>> FieldLabel;
   std::vector<std::vector<std::vector<float>>> GradianceDiff;
@@ -70,19 +123,24 @@ protected:
   std::vector<PrimeData> primes;
   std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjScalar;
   std::vector<std::vector<std::vector<std::vector<float>>>> SweepProjEnergy;
+  std::vector<std::string> sweepEnergyNames;
 
   int maxPointsPerNode = 32;
   int maxDepth = 8;
   void BuildOctree();
   void BuildOctreeRecursive(std::shared_ptr<OctreeNode> node,
                             const std::vector<int> &pointIndices, int depth);
-  void SweepProjection_Regist();
+  void SweepProjection_Regist(bool cutMesh = false);
+  void InitForbiddenBoundaryPoints();
+  void ReindexPrimesById();
   void SubdivideNode(std::shared_ptr<OctreeNode> node);
 
-  Eigen::Vector4f DistanceToMesh(int x, int y, int z);
-  void FindNearestPointsInOctree(const Eigen::Vector3f &point,
-                                 std::shared_ptr<OctreeNode> node,
-                                 std::vector<int> &candidateIndices);
+  Eigen::Vector4f ComputeVertexDistance(const Eigen::Vector3f &point,
+                                        MeshLib::CToolVertex *nearestVertex,
+                                        int x, int y, int z);
+  int FindNearestPointInOctree(const Eigen::Vector3f &point,
+                               std::shared_ptr<OctreeNode> node,
+                               float &bestDist);
   void ExtractSweepDir();
   float PointToTriangleDistance(const Eigen::Vector3f &point,
                                 const Eigen::Vector3f &v0,
@@ -96,8 +154,38 @@ protected:
   void DFS(MeshLib::CToolVertex *vert, int label);
 
   bool insideCuttingBox(Eigen::Vector3f point,
-                        const std::map<int, Eigen::Vector3f> &verticesMap);
+                        const std::map<int, Eigen::Vector3f> &verticesMap) const;
   std::shared_ptr<OctreeNode> octreeRoot;
+  std::vector<SweepBlockRegion> sweepBlocks;
+  std::vector<CylinderPairViz> cylinderPairViz;
+  std::vector<bool> sweepBlockNonPlanar;
+  std::vector<Eigen::Vector3f> sweepBlockColors;
+  std::map<VoxelIndex, int> voxelToBlock;
+
+  VoxelIndex WorldToVoxel(const Eigen::Vector3f &p) const;
+  std::map<int, Eigen::Vector3f>
+  BuildOrientedHex(const std::vector<Eigen::Vector3f> &pts,
+                   const Eigen::Vector3f &axis,
+                   const Eigen::Vector3f &origin) const;
+
+  static Eigen::Vector3f RandomSweepColor(int seed);
+  void EnsureSweepBlockColors();
+  void AppendSweepBlocks(const std::vector<SweepBlockRegion> &blocks,
+                         const std::vector<std::map<int, Eigen::Vector3f>> &hexes,
+                         bool nonPlanar);
+  int FindSweepBlockForPoint(const Eigen::Vector3f &position) const;
+  int FindSweepBlockForPrimeLabel(int primeLabel) const;
+  int SweepBlockToHexIndex(int sweepBlockIdx) const;
+  int HexIndexToSweepBlockIndex(int hexIdx) const;
+  int FindBasePlanarHexIndex() const;
+  bool IsPointInCylinderSweepBlock(int hexIdx,
+                                   const Eigen::Vector3f &position) const;
+  static float CuttingHexVolume(const std::map<int, Eigen::Vector3f> &verticesMap);
+  int FindSweepBlockForFace(const Eigen::Vector3f &position,
+                            const std::unordered_map<int, int> &labelVotes) const;
+  Eigen::Vector3f SweepDirectionAt(int blockIdx,
+                                 const Eigen::Vector3f &position) const;
+  static Eigen::Vector3f EncodeSweepDirColor(const Eigen::Vector3f &dir);
 };
 
 #endif

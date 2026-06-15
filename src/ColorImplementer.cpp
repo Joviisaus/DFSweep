@@ -76,9 +76,21 @@ void Implementer::Paint(std::map<int, int> colorMap) {
                                       return a.second < b.second;
                                     })
                        ->first;
+  CPoint paintRgb(0.0, 0.0, 0.0);
   for (MeshLib::MeshFaceIterator mfiter(this->mesh); !mfiter.end(); ++mfiter) {
     MeshLib::CToolFace *f = static_cast<MeshLib::CToolFace *>(mfiter.value());
-    if (f->sweeplabel() == -1 && f->visited() == true)
+    if (f->sweeplabel() == paintcolor && f->rgb().norm() > 0.3) {
+      paintRgb = f->rgb();
+      break;
+    }
+  }
+  for (MeshLib::MeshFaceIterator mfiter(this->mesh); !mfiter.end(); ++mfiter) {
+    MeshLib::CToolFace *f = static_cast<MeshLib::CToolFace *>(mfiter.value());
+    if (f->sweeplabel() == -1 && f->visited() == true) {
       f->sweeplabel() = paintcolor;
+      if (paintRgb.norm() > 0.3) {
+        f->rgb() = paintRgb;
+      }
+    }
   }
 }
