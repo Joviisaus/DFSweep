@@ -17,7 +17,12 @@ SweepDirSpliter::SweepDirSpliter(
     labelSet.insert(label);
   }
   this->LabelList.assign(labelSet.begin(), labelSet.end());
-  this->LabelTopo.resize(LabelList.size(), LabelList.size());
+  int maxLabel = 0;
+  for (int label : labelSet) {
+    if (label > maxLabel)
+      maxLabel = label;
+  }
+  this->LabelTopo.resize(maxLabel + 1, maxLabel + 1);
   this->LabelTopo.setZero();
 
   // this->LabelTopoGen();
@@ -107,8 +112,11 @@ void SweepDirSpliter::SweepDirSplit() {
             MaxEnergy = Energy;
         }
 
-        if (MaxEnergy > RotateZero)
-          labelSet[MinEnergyDirLabel].insert(FieldLabel[x][y][z]);
+        if (MaxEnergy > RotateZero) {
+          int voxelLabel = FieldLabel[x][y][z];
+          if (voxelLabel >= 0)
+            labelSet[MinEnergyDirLabel].insert(voxelLabel);
+        }
       }
     }
   }
@@ -175,14 +183,21 @@ void SweepDirSpliter::splitDisconnectedGroups(
 }
 
 void SweepDirSpliter::SweepMask(std::vector<std::vector<int>> &EnergyLabel) {
-  int dimX = this->SweepProjScalar[0][0].size();
-  int dimY = this->SweepProjScalar[0][0][0].size();
-  int dimZ = this->SweepProjScalar[0][0][0][0].size();
-  int numDirs = this->SweepDir[0].size();
+  int numDirs = static_cast<int>(this->SweepDir[0].size());
+  int projDirs = static_cast<int>(this->SweepProjScalar[0].size());
+  if (numDirs == 0 || projDirs == 0)
+    return;
+  if (numDirs > projDirs)
+    numDirs = projDirs;
+
+  int dimX = static_cast<int>(this->SweepProjScalar[0][0].size());
+  int dimY = static_cast<int>(this->SweepProjScalar[0][0][0].size());
+  int dimZ = static_cast<int>(this->SweepProjScalar[0][0][0][0].size());
 
   std::vector<std::unordered_set<int>> dirLabelSets(numDirs);
   for (int dir = 0; dir < numDirs; dir++) {
-    dirLabelSets[dir].insert(EnergyLabel[dir].begin(), EnergyLabel[dir].end());
+    if (dir < static_cast<int>(EnergyLabel.size()))
+      dirLabelSets[dir].insert(EnergyLabel[dir].begin(), EnergyLabel[dir].end());
   }
 
   std::vector<std::vector<std::vector<int>>> maxDirCache(

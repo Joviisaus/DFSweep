@@ -47,6 +47,9 @@ int main(int argc, char **argv) {
 #ifdef ENABLE_CUDA
   std::cout << "CUDA detected" << std::endl;
 #endif
+#ifdef ENABLE_METAL
+  std::cout << "Metal GPU detected" << std::endl;
+#endif
 #ifdef ENABLE_OMP
   std::cout << "openmp detected" << std::endl;
 #endif

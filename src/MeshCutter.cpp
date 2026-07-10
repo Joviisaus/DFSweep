@@ -2,6 +2,7 @@
 #include "MeshCutter.h"
 #include "CTMesh.h"
 #include "Mesh/iterators.h"
+#include <unordered_set>
 
 MeshCutter::MeshCutter(
     MeshLib::CTMesh *mesh,
@@ -175,51 +176,53 @@ void MeshCutter::MeshCut() {
 
 void MeshCutter::ManualSplitEdge(MeshLib::CToolEdge *e, Eigen::Vector3f pos,
                                  int &vId, int &fId, int cfid) {
-  // 1. 提取邻接面和端点
   MeshLib::CToolHalfEdge *he0 =
       static_cast<MeshLib::CToolHalfEdge *>(e->halfedge(0));
   MeshLib::CToolHalfEdge *he1 =
-      (e->halfedge(0) != NULL)
+      (e->halfedge(1) != NULL)
           ? static_cast<MeshLib::CToolHalfEdge *>(e->halfedge(1))
           : nullptr;
 
   MeshLib::CToolFace *f0 = static_cast<MeshLib::CToolFace *>(he0->face());
   MeshLib::CToolFace *f1 =
       (he1) ? static_cast<MeshLib::CToolFace *>(he1->face()) : nullptr;
+  if (!f0) {
+    return;
+  }
 
   MeshLib::CToolVertex *v_src =
       static_cast<MeshLib::CToolVertex *>(he0->source());
   MeshLib::CToolVertex *v_tgt =
       static_cast<MeshLib::CToolVertex *>(he0->target());
 
-  std::vector<MeshLib::CToolVertex *> loop0;
-  std::vector<MeshLib::CToolVertex *> loop1;
-  std::vector<MeshLib::CToolVertex *> loop2;
-  std::vector<MeshLib::CToolVertex *> loop3;
+  // Collect all edge pointers from faces BEFORE deletion so we can
+  // safely clean up vertex edge lists afterwards (deleteFace frees
+  // edges that lose all halfedges, leaving dangling pointers in
+  // vertex edge lists).
+  std::unordered_set<MeshLib::CEdge *> faceEdgePtrs;
+  std::unordered_set<MeshLib::CVertex *> affectedVerts;
+  auto collectFaceEdges = [&](MeshLib::CToolFace *face) {
+    if (!face)
+      return;
+    auto *h = face->halfedge();
+    auto *start = h;
+    do {
+      faceEdgePtrs.insert(h->edge());
+      affectedVerts.insert(h->source());
+      affectedVerts.insert(h->target());
+      h = h->he_next();
+    } while (h != start);
+  };
+  collectFaceEdges(f0);
+  collectFaceEdges(f1);
 
-  // SafeDeleteFace(f0);
-  // SafeDeleteFace(f1);
-
-  loop0.clear();
-  loop1.clear();
-  loop2.clear();
-  loop3.clear();
-  // 4. 创建新顶点并重建面
   MeshLib::CToolVertex *nv =
       static_cast<MeshLib::CToolVertex *>(this->mesh->createVertex(++vId));
   nv->point() = CPoint(pos.x(), pos.y(), pos.z());
   nv->sharp() = true;
   nv->cflabel() = cfid;
 
-  loop0.push_back(v_src);
-  loop0.push_back(
-      static_cast<MeshLib::CToolVertex *>(he1->he_next()->target()));
-  loop0.push_back(nv);
-
-  loop1.push_back(nv);
-  loop1.push_back(
-      static_cast<MeshLib::CToolVertex *>(he1->he_next()->target()));
-  loop1.push_back(v_tgt);
+  std::vector<MeshLib::CToolVertex *> loop0, loop1, loop2, loop3;
 
   loop2.push_back(nv);
   loop2.push_back(
@@ -231,22 +234,38 @@ void MeshCutter::ManualSplitEdge(MeshLib::CToolEdge *e, Eigen::Vector3f pos,
       static_cast<MeshLib::CToolVertex *>(he0->he_prev()->source()));
   loop3.push_back(nv);
 
+  if (he1) {
+    loop0.push_back(v_src);
+    loop0.push_back(
+        static_cast<MeshLib::CToolVertex *>(he1->he_next()->target()));
+    loop0.push_back(nv);
+
+    loop1.push_back(nv);
+    loop1.push_back(
+        static_cast<MeshLib::CToolVertex *>(he1->he_next()->target()));
+    loop1.push_back(v_tgt);
+  }
+
   this->mesh->deleteFace(f0);
-  this->mesh->deleteFace(f1);
+  if (f1)
+    this->mesh->deleteFace(f1);
 
-  this->mesh->edges().remove_if([](MeshLib::CEdge *e) {
-    // 先判空避免野指针/空指针访问，再判断目标条件
-    return e != nullptr && e->halfedge(0) == NULL;
-  });
+  // Build set of edges that survived deletion (still in mesh->edges())
+  std::unordered_set<MeshLib::CEdge *> aliveEdges;
+  for (auto it = this->mesh->edges().begin();
+       it != this->mesh->edges().end(); ++it) {
+    aliveEdges.insert(*it);
+  }
 
-  v_src->edges().remove_if([](MeshLib::CEdge *e) {
-    // 先判空避免野指针/空指针访问，再判断目标条件
-    return e != nullptr && e->halfedge(0) == NULL;
-  });
-  v_tgt->edges().remove_if([](MeshLib::CEdge *e) {
-    // 先判空避免野指针/空指针访问，再判断目标条件
-    return e != nullptr && e->halfedge(0) == NULL;
-  });
+  // Remove dangling pointers from vertex edge lists by pointer
+  // comparison only -- never dereference potentially freed edges.
+  auto isDangling = [&](MeshLib::CEdge *ep) {
+    return faceEdgePtrs.count(ep) && !aliveEdges.count(ep);
+  };
+  for (auto *v : affectedVerts) {
+    v->edges().remove_if(isDangling);
+  }
+
   if (!loop0.empty())
     this->mesh->createFace(loop0, ++fId);
   if (!loop1.empty())

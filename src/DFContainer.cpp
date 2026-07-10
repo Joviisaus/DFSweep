@@ -6,9 +6,15 @@
 #include "SweepDirSpliter.h"
 #include <Eigen/src/Core/Matrix.h>
 #include <cmath>
+#include <limits>
+#include <iostream>
 
 #ifdef ENABLE_CUDA
 #include "DistanceFieldCUDA.cuh"
+#endif
+
+#ifdef ENABLE_METAL
+#include "MetalNearestPoint.h"
 #endif
 
 DistanceField::DistanceField() { this->primes.clear(); };
@@ -565,6 +571,49 @@ double DistanceField::DisCompute(Eigen::Vector3f point, int label) {
   return (q - point).norm();
 };
 
+void ComputeNearestPointsCPU(
+    const std::vector<std::vector<std::vector<Eigen::Vector3f>>> &Coord,
+    const std::vector<std::vector<float>> &PointList,
+    std::vector<std::vector<std::vector<int>>> &NearestIndex) {
+  int xSize = (int)Coord.size();
+  if (xSize == 0)
+    return;
+  int ySize = (int)Coord[0].size();
+  int zSize = (int)Coord[0][0].size();
+  int numPoints = (int)PointList.size();
+
+  NearestIndex.resize(xSize);
+  for (int i = 0; i < xSize; ++i) {
+    NearestIndex[i].resize(ySize);
+    for (int j = 0; j < ySize; ++j)
+      NearestIndex[i][j].resize(zSize, -1);
+  }
+
+#ifdef ENABLE_OMP
+#pragma omp parallel for collapse(3)
+#endif
+  for (int i = 0; i < xSize; ++i) {
+    for (int j = 0; j < ySize; ++j) {
+      for (int k = 0; k < zSize; ++k) {
+        const Eigen::Vector3f &query = Coord[i][j][k];
+        float bestDist = std::numeric_limits<float>::max();
+        int bestIdx = -1;
+        for (int p = 0; p < numPoints; ++p) {
+          float dx = query.x() - PointList[p][0];
+          float dy = query.y() - PointList[p][1];
+          float dz = query.z() - PointList[p][2];
+          float d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 < bestDist) {
+            bestDist = d2;
+            bestIdx = p;
+          }
+        }
+        NearestIndex[i][j][k] = bestIdx;
+      }
+    }
+  }
+}
+
 void DistanceField::ComputeDistanceField() {
   if (PointList.empty() || Field.empty() || Coord.empty()) {
     return;
@@ -587,9 +636,15 @@ void DistanceField::ComputeDistanceField() {
     }
   }
 
-#ifdef ENABLE_CUDA
+#if defined(ENABLE_CUDA) || defined(ENABLE_METAL)
   std::vector<std::vector<std::vector<int>>> NearestPoint;
+#ifdef ENABLE_CUDA
+  std::cout << "Using CUDA for nearest point computation..." << std::endl;
   ComputeNearestPointsCUDA(this->Coord, this->PointList, NearestPoint);
+#else
+  std::cout << "Using Metal GPU for nearest point computation..." << std::endl;
+  ComputeNearestPointsMetal(this->Coord, this->PointList, NearestPoint);
+#endif
 
   std::vector<std::vector<std::vector<Eigen::Vector4f>>> DistanceScalar;
 
@@ -700,7 +755,7 @@ void DistanceField::ComputeDistanceField() {
     for (int j = 0; j < ySize; ++j) {
       for (int k = 0; k < zSize; ++k) {
 
-#ifdef ENABLE_CUDA
+#if defined(ENABLE_CUDA) || defined(ENABLE_METAL)
         Eigen::Vector4f distance = DistanceScalar[i][j][k];
 #else
         Eigen::Vector4f distance = DistanceToMesh(i, j, k);
@@ -1253,7 +1308,9 @@ void DistanceField::SweepProjection_Regist() {
             SweepEnergy[dirs][x][y][z] = -2e-4;
             continue;
           }
-          if (this->primes[this->FieldLabel[x][y][z]].isPlane &&
+          int fl = this->FieldLabel[x][y][z];
+          if (fl >= 0 && fl < static_cast<int>(this->primes.size()) &&
+              this->primes[fl].isPlane &&
               abs(this->Field[x][y][z]) < 2 * patch) {
             SweepEnergy[dirs][x][y][z] = -2e-3;
             continue;
