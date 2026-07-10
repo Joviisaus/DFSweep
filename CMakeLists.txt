@@ -162,7 +162,17 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
     GIT_TAG v2.5.0
 )
+find_package(CLI11 QUIET)
 FetchContent_MakeAvailable(CLI11)
+
+find_program(GMSH_EXECUTABLE gmsh
+    HINTS /opt/homebrew/bin /usr/local/bin)
+if(GMSH_EXECUTABLE)
+    message(STATUS "Gmsh found: ${GMSH_EXECUTABLE}")
+    add_compile_definitions(GMSH_EXECUTABLE="${GMSH_EXECUTABLE}")
+else()
+    message(STATUS "Gmsh not found; hex meshing will fall back to local structured quads")
+endif()
 
 find_package(Doxygen QUIET)
 find_package(Graphviz QUIET)

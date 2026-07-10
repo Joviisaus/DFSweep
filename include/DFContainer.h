@@ -7,6 +7,7 @@
 #include "MeshCutter.h"
 #include "OctTree.h"
 #include "SweepBlock.h"
+#include "SweepHexMesher.h"
 #include "SweepDirDetector.h"
 #include "SweepDirFilter.h"
 #include <Eigen/Eigen>
@@ -96,6 +97,13 @@ public:
   void DecomposeIntoTwoSweepBodies(float angularThreshold = 0.3f);
   void ApplySweepVisualization();
   bool HasNonPlanarPrimes() const;
+  // Hex meshing is optional and must not change CuttingHex / mesh blocking.
+  void GenerateSweepHexMeshes(int divisionsU = 8, int divisionsV = 8,
+                              int divisionsW = 4, float targetCellSize = 0.0f);
+  bool WriteSweepHexMeshesVTK(const std::string &path) const;
+  const std::vector<SweepHexMesh> &GetSweepHexMeshes() const {
+    return sweepHexMeshes;
+  }
   bool PrimeLabelValid(int label) const;
   const PrimeData *GetPrimeByLabel(int label) const;
   std::vector<SweepBlockRegion> GetSweepBlocks() const {
@@ -131,6 +139,16 @@ protected:
   void BuildOctreeRecursive(std::shared_ptr<OctreeNode> node,
                             const std::vector<int> &pointIndices, int depth);
   void SweepProjection_Regist(bool cutMesh = false);
+  /**
+   * @brief 计算各扫掠方向的投影标量与组合能量（Filter + Spliter + Alpha）。
+   * @return 能量场数量（与 SweepDir 一一对应）
+   */
+  int ComputeSweepDirectionEnergies();
+  /**
+   * @brief 对每个已算好的扫掠能量，按对应方向各建一个 CuttingBox。
+   * 规则：有几个能量就建几个框。
+   */
+  void BuildCuttingBoxesFromEnergies(bool cutMesh = false);
   void InitForbiddenBoundaryPoints();
   void ReindexPrimesById();
   void SubdivideNode(std::shared_ptr<OctreeNode> node);
@@ -157,6 +175,7 @@ protected:
                         const std::map<int, Eigen::Vector3f> &verticesMap) const;
   std::shared_ptr<OctreeNode> octreeRoot;
   std::vector<SweepBlockRegion> sweepBlocks;
+  std::vector<SweepHexMesh> sweepHexMeshes;
   std::vector<CylinderPairViz> cylinderPairViz;
   std::vector<bool> sweepBlockNonPlanar;
   std::vector<Eigen::Vector3f> sweepBlockColors;

@@ -29,12 +29,17 @@ int main(int argc, char **argv) {
 
   bool useGeneralizedSweep = false;
   bool cutMesh = false;
+  bool forceTwoSweepBodies = false;
   float sweepAngleThreshold = 0.3f;
   app.add_flag("--cut-mesh", cutMesh,
                "Cut mesh with sweep boxes (slow; off by default)");
   app.add_flag("-g,--generalized-sweep", useGeneralizedSweep,
                "Use generalized iso-surface sweep decomposition (SweepBlock) "
                "instead of CuttingBox");
+  app.add_flag(
+      "--two-sweep-bodies", forceTwoSweepBodies,
+      "Force tube+base two-body split (CylinderPrime). Default is planar "
+      "CuttingBox only — non-planar primes do not switch to cylinder sweep");
   app.add_option("-t,--sweep-threshold", sweepAngleThreshold,
                  "Angular threshold (radians) for sweep direction constraint "
                  "in generalized mode");
@@ -100,7 +105,9 @@ int main(int argc, char **argv) {
     }
     DistanceField.GeneralizedSweepDecomposition(sweepAngleThreshold, false);
   } else if (!prime_file.empty()) {
-    if (DistanceField.HasNonPlanarPrimes()) {
+    // 能量已由 ComputeSweepDirectionEnergies 算好 → 有几个能量就建几个 CuttingBox。
+    // --two-sweep-bodies 仅用于显式管体+底座特例。
+    if (forceTwoSweepBodies) {
       DistanceField.DecomposeIntoTwoSweepBodies(sweepAngleThreshold);
     } else {
       DistanceField.RunCuttingBoxPipeline(cutMesh);

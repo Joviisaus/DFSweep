@@ -7,6 +7,8 @@
 #include "polyscope/polyscope.h"
 #include "polyscope/surface_mesh.h"
 #include "polyscope/volume_grid.h"
+#include "polyscope/volume_mesh.h"
+#include "SweepHexMesher.h"
 #include <Eigen/Eigen>
 
 
@@ -28,6 +30,7 @@ public:
       const std::vector<Eigen::Vector3f> &blockColors = {},
       const std::vector<int> &displayHexIndices = {},
       const std::vector<std::string> &sweepEnergyNames = {});
+  void setSweepHexMeshes(const std::vector<SweepHexMesh> &meshes);
 
 protected:
   MeshLib::CTMesh *mesh;
@@ -57,7 +60,9 @@ protected:
   std::vector<int> VertSweepBlock;
   std::vector<int> FaceSweepBlock;
   std::vector<int> FaceSweepTypes;
+  std::vector<Eigen::Vector3f> FaceBottomHighlight; // 底面高亮色
   std::vector<std::vector<int>> faces;
+  std::vector<SweepHexMesh> sweepHexMeshes;
 };
 
 #endif

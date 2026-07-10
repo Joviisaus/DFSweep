@@ -5,6 +5,8 @@
 #include "SweepDirDetector.h"
 #include "SweepDirFilter.h"
 #include "SweepDirSpliter.h"
+#include "SweepFaceImprinter.h"
+#include "SweepHexMesher.h"
 #include <Eigen/src/Core/Matrix.h>
 #include <cmath>
 #include <cstdint>
@@ -1684,34 +1686,46 @@ void DistanceField::RunCuttingBoxPipeline(bool cutMesh) {
   SweepProjection_Regist(cutMesh);
 }
 
-void DistanceField::SweepProjection_Regist(bool cutMesh) {
+int DistanceField::ComputeSweepDirectionEnergies() {
   this->ExtractSweepDir();
 
+  this->SweepProjScalar.clear();
+  this->SweepProjEnergy.clear();
+  this->sweepEnergyNames.clear();
+
   if (this->getGradianceCount().size() == 0) {
-    return;
+    return 0;
   }
   if (this->GradianceField.size() == 0) {
-    return;
+    return 0;
+  }
+  if (this->SweepDir.empty()) {
+    std::cerr << "[ComputeSweepDirectionEnergies] no sweep directions\n";
+    return 0;
   }
 
-  int xSize = Field.size();
-  int ySize = (xSize > 0) ? Field[0].size() : 0;
-  int zSize = (ySize > 0) ? Field[0][0].size() : 0;
+  int xSize = static_cast<int>(Field.size());
+  int ySize = (xSize > 0) ? static_cast<int>(Field[0].size()) : 0;
+  int zSize = (ySize > 0) ? static_cast<int>(Field[0][0].size()) : 0;
 
-  for (int DirCount = 0; DirCount < SweepDir.size(); DirCount++) {
+  for (int DirCount = 0; DirCount < static_cast<int>(SweepDir.size());
+       DirCount++) {
     std::vector<std::vector<std::vector<float>>> ProjScalar;
+    ProjScalar.reserve(static_cast<size_t>(xSize));
     for (int i = 0; i < xSize; i++) {
       std::vector<std::vector<float>> ProjScalarX;
+      ProjScalarX.reserve(static_cast<size_t>(ySize));
       for (int j = 0; j < ySize; j++) {
         std::vector<float> ProjScalarXY;
+        ProjScalarXY.reserve(static_cast<size_t>(zSize));
         for (int k = 0; k < zSize; k++) {
-          float ProjScalarXYZ;
           float angle = std::acos(
               abs(this->GradianceField[i][j][k].dot(SweepDir[DirCount]) /
                   (this->GradianceField[i][j][k].norm() *
                    SweepDir[DirCount].norm())));
-          ProjScalarXYZ = abs(angle) > abs(PI / 2 - angle) ? abs(PI / 2 - angle)
-                                                           : abs(angle);
+          float ProjScalarXYZ =
+              abs(angle) > abs(PI / 2 - angle) ? abs(PI / 2 - angle)
+                                               : abs(angle);
           if (this->Field[i][j][k] < 0.0f)
             ProjScalarXYZ = EXTERIOR_SWEEP_ENERGY;
           ProjScalarXY.push_back(ProjScalarXYZ);
@@ -1732,15 +1746,26 @@ void DistanceField::SweepProjection_Regist(bool cutMesh) {
                      this->FieldLabel);
   std::cout << "SweepDirSpliter done. SweepDir size: " << this->SweepDir.size()
             << std::endl;
-  int DirSize = this->SweepDir.size();
+
+  // Spliter 可能增删方向，同步标量场尺寸
+  if (this->SweepProjScalar.size() != this->SweepProjEnergy.size()) {
+    this->SweepProjScalar = this->SweepProjEnergy;
+  }
+
+  int DirSize = static_cast<int>(this->SweepDir.size());
   auto SweepEnergy = this->SweepProjEnergy;
   float patch = (this->Coord[0][0][0] - this->Coord[0][0][1]).norm();
   STEP_SIZE = patch;
   std::cout << "Starting energy computation..." << std::endl;
-  for (int dirs = 0; dirs < this->SweepProjEnergy.size(); dirs++) {
-    for (int x = 0; x < this->SweepProjEnergy[dirs].size(); x++) {
-      for (int y = 0; y < this->SweepProjEnergy[dirs][x].size(); y++) {
-        for (int z = 0; z < this->SweepProjEnergy[dirs][x][y].size(); z++) {
+  for (int dirs = 0; dirs < static_cast<int>(this->SweepProjEnergy.size());
+       dirs++) {
+    for (int x = 0; x < static_cast<int>(this->SweepProjEnergy[dirs].size());
+         x++) {
+      for (int y = 0;
+           y < static_cast<int>(this->SweepProjEnergy[dirs][x].size()); y++) {
+        for (int z = 0;
+             z < static_cast<int>(this->SweepProjEnergy[dirs][x][y].size());
+             z++) {
           if (this->Field[x][y][z] < 0.0f) {
             SweepEnergy[dirs][x][y][z] = EXTERIOR_SWEEP_ENERGY;
             continue;
@@ -1757,7 +1782,8 @@ void DistanceField::SweepProjection_Regist(bool cutMesh) {
             continue;
           }
           float OtherEnergy = -2e-3;
-          for (int RestDirs = 0; RestDirs < this->SweepProjEnergy.size();
+          for (int RestDirs = 0;
+               RestDirs < static_cast<int>(this->SweepProjEnergy.size());
                RestDirs++) {
             if (RestDirs != dirs)
               OtherEnergy += -this->SweepProjEnergy[RestDirs][x][y][z];
@@ -1771,18 +1797,90 @@ void DistanceField::SweepProjection_Regist(bool cutMesh) {
     }
   }
   this->SweepProjEnergy = SweepEnergy;
-  sweepBlockNonPlanar.clear();
-  sweepBlockColors.clear();
-  for (int i = 0; i < this->SweepDir.size(); i++) {
-    CuttingBox cb(SweepDir, &SweepProjEnergy, Coord, this->FieldLabel,
-                  this->Field, this->primes, i);
+
+  // 能量与方向必须一一对应
+  if (this->SweepDir.size() != this->SweepProjEnergy.size()) {
+    std::cerr << "[ComputeSweepDirectionEnergies] size mismatch SweepDir="
+              << this->SweepDir.size() << " Energy="
+              << this->SweepProjEnergy.size() << "\n";
+    const size_t n =
+        std::min(this->SweepDir.size(), this->SweepProjEnergy.size());
+    this->SweepDir.resize(n);
+    this->SweepProjEnergy.resize(n);
+    this->SweepProjScalar.resize(n);
+  }
+
+  this->sweepEnergyNames.clear();
+  this->sweepEnergyNames.reserve(this->SweepProjEnergy.size());
+  for (size_t i = 0; i < this->SweepProjEnergy.size(); ++i) {
+    this->sweepEnergyNames.push_back("Sweep Energy " + std::to_string(i));
+  }
+  std::cout << "[ComputeSweepDirectionEnergies] registered "
+            << this->SweepProjEnergy.size()
+            << " directional energy fields (= #boxes to build)\n";
+  return static_cast<int>(this->SweepProjEnergy.size());
+}
+
+void DistanceField::SweepProjection_Regist(bool cutMesh) {
+  // 1) 算能量  2) 有几个能量就建几个框
+  if (ComputeSweepDirectionEnergies() <= 0) {
+    return;
+  }
+  BuildCuttingBoxesFromEnergies(cutMesh);
+}
+
+void DistanceField::BuildCuttingBoxesFromEnergies(bool cutMesh) {
+  const int nEnergy = static_cast<int>(this->SweepProjEnergy.size());
+  if (nEnergy <= 0) {
+    std::cerr << "[BuildCuttingBoxesFromEnergies] no energy fields; call "
+                 "ComputeSweepDirectionEnergies first\n";
+    return;
+  }
+  if (static_cast<int>(this->SweepDir.size()) != nEnergy) {
+    std::cerr << "[BuildCuttingBoxesFromEnergies] SweepDir("
+              << this->SweepDir.size() << ") != SweepProjEnergy(" << nEnergy
+              << "); syncing to energy count\n";
+    if (static_cast<int>(this->SweepDir.size()) > nEnergy) {
+      this->SweepDir.resize(static_cast<size_t>(nEnergy));
+    } else {
+      while (static_cast<int>(this->SweepDir.size()) < nEnergy) {
+        this->SweepDir.push_back(Eigen::Vector3f::UnitY());
+      }
+    }
+  }
+  if (static_cast<int>(this->SweepProjScalar.size()) != nEnergy) {
+    this->SweepProjScalar = this->SweepProjEnergy;
+  }
+  if (static_cast<int>(this->sweepEnergyNames.size()) != nEnergy) {
+    this->sweepEnergyNames.resize(static_cast<size_t>(nEnergy));
+    for (int i = 0; i < nEnergy; ++i) {
+      if (this->sweepEnergyNames[static_cast<size_t>(i)].empty()) {
+        this->sweepEnergyNames[static_cast<size_t>(i)] =
+            "Sweep Energy " + std::to_string(i);
+      }
+    }
+  }
+
+  this->CuttingHexLists.clear();
+  this->sweepBlockNonPlanar.clear();
+  this->sweepBlockColors.clear();
+
+  std::cout << "[BuildCuttingBoxesFromEnergies] building " << nEnergy
+            << " CuttingBoxes (1 per energy / sweep dir)\n";
+  for (int i = 0; i < nEnergy; ++i) {
+    CuttingBox cb(this->SweepDir, &this->SweepProjEnergy, this->Coord,
+                  this->FieldLabel, this->Field, this->primes, i);
     this->ForbiddenBoundaryPoints = cb.GetForbiddenBoundaryPoints();
     this->CuttingHexLists.push_back(cb.GetBoxVertices());
     this->sweepBlockNonPlanar.push_back(false);
     this->sweepBlockColors.push_back(RandomSweepColor(i));
+    std::cout << "  box " << i << " dir=(" << this->SweepDir[static_cast<size_t>(i)].transpose()
+              << ") energy=\"" << this->sweepEnergyNames[static_cast<size_t>(i)]
+              << "\"\n";
   }
   std::cout << "CuttingBoxes done (" << this->CuttingHexLists.size() << ")"
             << std::endl;
+
   if (cutMesh && this->mesh && !this->CuttingHexLists.empty()) {
     std::cout << "Running MeshCutter..." << std::endl;
     MeshCutter mc(this->mesh, this->CuttingHexLists);
@@ -1882,6 +1980,12 @@ void DistanceField::GeneralizedSweepDecomposition(float angularThreshold,
 void DistanceField::AppendCylinderSweepDecomposition(float angularThreshold) {
   std::cout << "[AppendCylinderSweep] non-planar sweep for gradient-matched "
                "cylinder pairs only\n";
+  // 柱面扫掠也必须先有方向能量场（与平面 CuttingBox 同一套）
+  if (this->SweepProjEnergy.empty()) {
+    std::cout << "[AppendCylinderSweep] computing directional sweep energies "
+                 "first\n";
+    ComputeSweepDirectionEnergies();
+  }
   GeneralizedSweepDecomposition(angularThreshold, true);
 }
 
@@ -1996,7 +2100,16 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
   std::cout << "[TwoSweepBodies] decomposing into cylinder-radial (tube) + "
                "vertical (cube) bodies\n";
 
-  // --- 1. 先用柱面分解拿到柱轴/原点/成员 prime（仅取几何参数） ---
+  // --- 0. 柱面扫掠也首先计算各方向扫掠能量（与平面 CuttingBox 同一套） ---
+  const int nDirEnergy = ComputeSweepDirectionEnergies();
+  auto planarScalar = this->SweepProjScalar;
+  auto planarEnergy = this->SweepProjEnergy;
+  auto planarEnergyNames = this->sweepEnergyNames;
+  auto planarSweepDirs = this->SweepDir;
+  std::cout << "[TwoSweepBodies] kept " << nDirEnergy
+            << " planar directional energies for VolumeGrid\n";
+
+  // --- 1. 再用柱面分解拿到柱轴/原点/成员 prime（仅取几何参数） ---
   GeneralizedSweepDecomposition(angularThreshold, /*cylinderPairsOnly=*/true);
 
   Eigen::Vector3f axis = Eigen::Vector3f::UnitY();
@@ -2011,7 +2124,7 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
     axis = Eigen::Vector3f::UnitY();
   }
 
-  // 清空中间状态，重建两个扫掠体
+  // 清空分块状态，重建两个扫掠体；方向能量场稍后恢复，不丢弃
   this->CuttingHexLists.clear();
   this->sweepBlocks.clear();
   this->SweepDir.clear();
@@ -2056,7 +2169,6 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
   }
 
   // 管壁 = 轴向跨度大的柱面 prime（区别于柱孔底盖等短小成员）。
-  // 取这些管壁的内外半径作为“同一中轴、不同半径”的切割指标。
   float maxExtent = 0.0f;
   for (const auto &[lbl, axMin] : primeAxMin) {
     maxExtent = std::max(maxExtent, primeAxMax[lbl] - axMin);
@@ -2077,7 +2189,7 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
               << " ax=[" << primeAxMin[lbl] << ", " << primeAxMax[lbl]
               << "] extent=" << extent << (isWall ? " [wall]" : "") << "\n";
     if (!isWall) {
-      continue; // 短小成员（如底座柱孔）不参与管壁半径
+      continue;
     }
     wallPrimes.insert(lbl);
     if (r > rOuter) {
@@ -2090,7 +2202,23 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
     rInner = 0.0f;
   }
 
-  // === 能量柱面切割盒：求半径范围 [MinR,MaxR] 与轴向范围 [MinAx,MaxAx] ===
+  // 在已算好的方向能量中，找与柱轴最对齐的那一路
+  int axisEnergyIdx = -1;
+  float bestAlign = -1.0f;
+  for (int i = 0; i < static_cast<int>(planarSweepDirs.size()); ++i) {
+    float align = std::abs(planarSweepDirs[static_cast<size_t>(i)]
+                               .normalized()
+                               .dot(axis));
+    if (align > bestAlign) {
+      bestAlign = align;
+      axisEnergyIdx = i;
+    }
+  }
+  if (axisEnergyIdx >= 0) {
+    std::cout << "[TwoSweepBodies] using planar Sweep Energy " << axisEnergyIdx
+              << " (align=" << bestAlign << ") with cylinder axis\n";
+  }
+
   float tubeAxLow = std::numeric_limits<float>::lowest();
   float tubeAxHigh = std::numeric_limits<float>::max();
   std::map<int, Eigen::Vector3f> tubeHexFromCut;
@@ -2111,7 +2239,6 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
     haveRadialEnergy = true;
   }
 
-  // --- 3. 按轴向把内部体素分到 管(径向) / 底座(垂直) 两体 ---
   int D1 = static_cast<int>(Field.size());
   int D2 = D1 > 0 ? static_cast<int>(Field[0].size()) : 0;
   int D3 = D2 > 0 ? static_cast<int>(Field[0][0].size()) : 0;
@@ -2135,21 +2262,30 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
   Eigen::Vector3f tubeCen = Eigen::Vector3f::Zero();
   Eigen::Vector3f cubeCen = Eigen::Vector3f::Zero();
 
-  // 注意：本工程距离场约定 Field>0 为实体内部、Field<0 为外部。
-  // 管体 = 落在柱面切割盒（轴向范围 × 半径范围）内的实体体素；其余归底座。
   const float rBand = 2.0f * PatchSize;
+  const bool useAxisEnergy =
+      axisEnergyIdx >= 0 &&
+      axisEnergyIdx < static_cast<int>(planarEnergy.size());
   for (int x = 0; x < D1; ++x) {
     for (int y = 0; y < D2; ++y) {
       for (int z = 0; z < D3; ++z) {
         if (Field[x][y][z] <= 0.0f) {
-          continue; // 仅取实体内部体素
+          continue;
         }
         const Eigen::Vector3f &p = Coord[x][y][z];
         float a = axialPos(p);
         float r = radialDist(p);
         VoxelIndex vi{x, y, z};
         bool inTubeBand = (a >= tubeAxLow && a <= tubeAxHigh);
-        if (haveTubeCut && inTubeBand && r <= rOuter + rBand) {
+        bool inTubeWall =
+            haveTubeCut && inTubeBand && r <= rOuter + rBand;
+        if (inTubeWall && useAxisEnergy) {
+          float e = planarEnergy[static_cast<size_t>(axisEnergyIdx)][x][y][z];
+          if (e > angularThreshold * 2.0f && r < rInner - rBand) {
+            inTubeWall = false;
+          }
+        }
+        if (inTubeWall) {
           tubeBody.coveredVoxels.insert(vi);
           tubePts.push_back(p);
           tubeCen += p;
@@ -2162,7 +2298,6 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
     }
   }
 
-  // --- 4. 构建两体的定向包围盒并登记 ---
   if (!tubePts.empty()) {
     tubeCen /= static_cast<float>(tubePts.size());
     tubeBody.radialInner = std::max(0.0f, rInner);
@@ -2192,7 +2327,6 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
     this->CuttingHexLists.push_back(cubeHex);
   }
 
-  // --- 5. 体素 -> 分块 归属表（管体优先） ---
   for (int i = static_cast<int>(this->sweepBlocks.size()) - 1; i >= 0; --i) {
     for (const auto &v :
          this->sweepBlocks[static_cast<size_t>(i)].coveredVoxels) {
@@ -2206,10 +2340,10 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
             << outerPrime << " rInner=" << rInner << " rOuter=" << rOuter
             << " tubeAx=[" << tubeAxLow << ", " << tubeAxHigh << "]\n";
 
-  // --- 6. 写入体素场能量，供 VolumeGrid 可视化 ---
-  this->SweepProjScalar.clear();
-  this->SweepProjEnergy.clear();
-  this->sweepEnergyNames.clear();
+  // --- 6. 恢复平面方向能量，再追加柱面专用能量（不再清空） ---
+  this->SweepProjScalar = planarScalar;
+  this->SweepProjEnergy = planarEnergy;
+  this->sweepEnergyNames = planarEnergyNames;
   if (haveRadialEnergy) {
     this->SweepProjScalar.push_back(radialEnergyField);
     this->SweepProjEnergy.push_back(radialEnergyField);
@@ -2221,7 +2355,8 @@ void DistanceField::DecomposeIntoTwoSweepBodies(float angularThreshold) {
   this->SweepProjEnergy.push_back(verticalEnergyField);
   this->sweepEnergyNames.push_back("Vertical Sweep Energy");
   std::cout << "[TwoSweepBodies] energy fields registered: "
-            << this->sweepEnergyNames.size() << "\n";
+            << this->sweepEnergyNames.size() << " (planar " << nDirEnergy
+            << " + cylinder extras)\n";
 }
 
 void DistanceField::ReducePrimesToDevelopable(double curvatureThreshold,
@@ -2256,4 +2391,61 @@ void DistanceField::ReducePrimesToDevelopable(double curvatureThreshold,
     out.close();
     std::cout << "[ReducePrimesToDevelopable] Wrote " << exportPath << "\n";
   }
+}
+
+void DistanceField::GenerateSweepHexMeshes(int divisionsU, int divisionsV,
+                                           int divisionsW,
+                                           float targetCellSize) {
+  SweepHexMesherConfig cfg;
+  cfg.divisionsU = divisionsU;
+  cfg.divisionsV = divisionsV;
+  cfg.divisionsW = divisionsW;
+  cfg.targetCellSize = targetCellSize; // 0 = 使用显式 divisions，不自动加密
+
+  std::vector<SweepBlockRegion> blocks = this->sweepBlocks;
+  const auto &hexes = this->CuttingHexLists;
+
+  // 平面 CuttingBox 路径没有 sweepBlocks 时，从切割盒合成平移扫掠块（仅 hex 路径使用）。
+  if (blocks.empty() && !hexes.empty()) {
+    std::cout << "[GenerateSweepHexMeshes] synthesizing " << hexes.size()
+              << " translational blocks from planar CuttingBoxes\n";
+    blocks.reserve(hexes.size());
+    for (size_t i = 0; i < hexes.size(); ++i) {
+      SweepBlockRegion b{};
+      b.kind = SweepKind::Translational;
+      b.isValid = hexes[i].size() == 8;
+      b.patchId = static_cast<int>(i);
+      b.primeId = -1;
+      Eigen::Vector3f axis = Eigen::Vector3f::UnitY();
+      if (i < this->SweepDir.size() &&
+          this->SweepDir[i].norm() > 1e-8f) {
+        axis = this->SweepDir[i].normalized();
+      }
+      b.sweepAxis = axis;
+      Eigen::Vector3f origin = Eigen::Vector3f::Zero();
+      for (const auto &kv : hexes[i]) {
+        origin += kv.second;
+      }
+      if (!hexes[i].empty()) {
+        origin /= static_cast<float>(hexes[i].size());
+      }
+      b.sweepOrigin = origin;
+      SweepCapFrame frame;
+      if (SweepFaceImprinter::BuildFrameFromHex(hexes[i], axis, origin,
+                                                frame)) {
+        b.axialLower = frame.axMin;
+        b.axialUpper = frame.axMax;
+        b.crossDirY = frame.crossY;
+        b.crossDirZ = frame.crossZ;
+      }
+      blocks.push_back(b);
+    }
+  }
+
+  this->sweepHexMeshes =
+      SweepHexMesher::Generate(blocks, hexes, cfg, this->mesh);
+}
+
+bool DistanceField::WriteSweepHexMeshesVTK(const std::string &path) const {
+  return SweepHexMesher::WriteVTK(this->sweepHexMeshes, path);
 }

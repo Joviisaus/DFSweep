@@ -16,6 +16,7 @@ int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
   this->FaceSweepBlock.clear();
   this->label.clear();
   this->FaceSweepTypes.clear();
+  this->FaceBottomHighlight.clear();
 
   auto blockColorAt = [&](int blockIdx) -> Eigen::Vector3f {
     if (blockIdx >= 0 &&
@@ -62,6 +63,16 @@ int MeshViewer::setMesh(MeshLib::CTMesh *mesh) {
     this->FaceBlockColors.push_back(fc);
     int ft = f->sweepFaceType();
     this->FaceSweepTypes.push_back(ft);
+    // 底面(5)=黄，内柱面源壁(6)=青，外柱面目标壁(7)=橙
+    if (ft == 5) {
+      this->FaceBottomHighlight.emplace_back(1.0f, 0.92f, 0.15f);
+    } else if (ft == 6) {
+      this->FaceBottomHighlight.emplace_back(0.15f, 0.95f, 1.0f);
+    } else if (ft == 7) {
+      this->FaceBottomHighlight.emplace_back(1.0f, 0.55f, 0.15f);
+    } else {
+      this->FaceBottomHighlight.push_back(fc * 0.35f);
+    }
   }
 
   return 0;
@@ -139,6 +150,10 @@ void MeshViewer::setGrid(
   }
 }
 
+void MeshViewer::setSweepHexMeshes(const std::vector<SweepHexMesh> &meshes) {
+  this->sweepHexMeshes = meshes;
+}
+
 int MeshViewer::show() {
   polyscope::init();
   auto mesh = polyscope::registerSurfaceMesh("Mesh", vertices, faces);
@@ -150,6 +165,8 @@ int MeshViewer::show() {
       ->setEnabled(true);
   mesh->addFaceScalarQuantity("Sweep Block", this->FaceSweepBlock);
   mesh->addFaceScalarQuantity("FaceSweepTypes", this->FaceSweepTypes);
+  mesh->addFaceColorQuantity("Source Faces (surface)", this->FaceBottomHighlight)
+      ->setEnabled(true);
   polyscope::VolumeGrid *psGrid = polyscope::registerVolumeGrid(
       "Field", {dimX, dimY, dimZ}, bound_low, bound_high);
   uint32_t nData = dimX * dimY * dimZ;
@@ -258,6 +275,79 @@ int MeshViewer::show() {
     cn->setEnabled(true);
     if (isNonPlanar) {
       cylinderRegionId++;
+    }
+  }
+
+  const std::array<glm::vec3, 4> hexVolColors = {
+      glm::vec3(0.2f, 0.85f, 1.0f), glm::vec3(1.0f, 0.55f, 0.2f),
+      glm::vec3(0.55f, 1.0f, 0.35f), glm::vec3(0.95f, 0.45f, 0.95f)};
+  for (size_t mi = 0; mi < this->sweepHexMeshes.size(); ++mi) {
+    const SweepHexMesh &hm = this->sweepHexMeshes[mi];
+    if ((hm.hexes.empty() && hm.wedges.empty()) || hm.nodes.empty()) {
+      continue;
+    }
+
+    std::vector<glm::vec3> glmVerts;
+    glmVerts.reserve(hm.nodes.size());
+    for (const auto &v : hm.nodes) {
+      glmVerts.emplace_back(v.x(), v.y(), v.z());
+    }
+
+    // Polyscope 仅支持 tet/hex：wedge 拆成 3 个 tet
+    std::vector<std::array<uint32_t, 4>> tetCells;
+    tetCells.reserve(hm.wedges.size() * 3);
+    for (const auto &w : hm.wedges) {
+      const uint32_t a = static_cast<uint32_t>(w[0]);
+      const uint32_t b = static_cast<uint32_t>(w[1]);
+      const uint32_t c = static_cast<uint32_t>(w[2]);
+      const uint32_t d = static_cast<uint32_t>(w[3]);
+      const uint32_t e = static_cast<uint32_t>(w[4]);
+      const uint32_t f = static_cast<uint32_t>(w[5]);
+      tetCells.push_back({a, b, c, d});
+      tetCells.push_back({b, c, d, e});
+      tetCells.push_back({c, d, e, f});
+    }
+
+    std::vector<std::array<uint32_t, 8>> hexCells;
+    hexCells.reserve(hm.hexes.size());
+    for (const auto &h : hm.hexes) {
+      std::array<uint32_t, 8> cell{};
+      for (int k = 0; k < 8; ++k) {
+        cell[static_cast<size_t>(k)] =
+            static_cast<uint32_t>(h[static_cast<size_t>(k)]);
+      }
+      hexCells.push_back(cell);
+    }
+
+    std::string volName = hm.name.empty()
+                              ? ("Sweep Hex Volume " + std::to_string(mi))
+                              : hm.name;
+    polyscope::VolumeMesh *vol = nullptr;
+    if (!hexCells.empty() && !tetCells.empty()) {
+      vol = polyscope::registerTetHexMesh(volName, glmVerts, tetCells, hexCells);
+    } else if (!hexCells.empty()) {
+      vol = polyscope::registerHexMesh(volName, glmVerts, hexCells);
+    } else {
+      vol = polyscope::registerTetMesh(volName, glmVerts, tetCells);
+    }
+    if (vol) {
+      vol->setColor(hexVolColors[mi % hexVolColors.size()]);
+      vol->setEnabled(true);
+    }
+
+    if (!hm.imprintEdges.empty()) {
+      std::vector<glm::vec3> impVerts;
+      std::vector<std::array<size_t, 2>> impEdges;
+      for (const auto &seg : hm.imprintEdges) {
+        size_t base = impVerts.size();
+        impVerts.emplace_back(seg[0].x(), seg[0].y(), seg[0].z());
+        impVerts.emplace_back(seg[1].x(), seg[1].y(), seg[1].z());
+        impEdges.push_back({base, base + 1});
+      }
+      std::string impName = "Imprint Features " + std::to_string(mi);
+      auto impNet = polyscope::registerCurveNetwork(impName, impVerts, impEdges);
+      impNet->setColor(glm::vec3(1.0f, 0.15f, 0.15f));
+      impNet->setEnabled(true);
     }
   }
 
